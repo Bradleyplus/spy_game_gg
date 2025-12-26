@@ -1,0 +1,5 @@
+{
+  "name": "Web Spy Game (Undercover)",
+  "description": "A lightweight multiplayer party game where players must find the spy among them. Features real-time sync simulation and AI-generated word pairs.",
+  "requestFramePermissions": []
+}
