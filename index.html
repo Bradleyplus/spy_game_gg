@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Undercover - Web Spy Game</title>
     <script>
-      // 1. 全局异常监控：将错误直接输出到屏幕
+      // 1. 全局异常监控
       window.onerror = function(msg, source, lineno, colno, error) {
         console.error('Global Error:', msg);
         var errorDisplay = document.getElementById('debug-error-display');
@@ -24,24 +24,20 @@
         return false;
       };
 
-      // 2. 超时检测 (15秒)：如果 index.tsx 没能成功运行并清除此定时器，说明加载失败
+      // 2. 超时检测 (15秒)
       window.loadTimer = setTimeout(function() {
           const root = document.getElementById('root');
           if (root && root.querySelector('.boot-loader')) {
-              console.warn('Bootloader timed out. Application failed to mount.');
+              console.warn('Bootloader timed out.');
               root.innerHTML = `
                 <div style="height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:20px; background:#020617;">
                     <div style="font-size:48px; margin-bottom:20px;">📡</div>
                     <h2 style="color:#f87171; font-weight:900; margin-bottom:10px;">CONNECTION TIMEOUT</h2>
                     <p style="color:#94a3b8; max-width:400px; font-size:14px; margin-bottom:30px;">
                         The application is taking too long to initialize.<br><br>
-                        Possible causes:<br>
-                        1. <b>Network Block</b>: ESM.sh or Firebase is unreachable.<br>
-                        2. <b>Browser Cache</b>: Old script versions are conflicting.<br>
-                        3. <b>ImportMap Crash</b>: Module resolution failed.
+                        This is usually caused by an <b>invalid ImportMap</b> or <b>Network Block</b>.
                     </p>
                     <button onclick="location.reload()" style="padding:12px 24px; background:#1e293b; color:white; border:1px solid #334155; border-radius:12px; font-weight:bold; cursor:pointer;">FORCE REFRESH</button>
-                    <p style="margin-top:20px; font-size:10px; color:#475569; font-family:monospace;">Please check "Console" tab in DevTools for technical details</p>
                 </div>`;
           }
       }, 15000);
@@ -54,7 +50,7 @@
         @keyframes pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
         @keyframes spin { to { transform: rotate(360deg); } }
     </style>
-    <!-- 修复后的 importmap：删除了所有冲突的版本和无效的斜杠路径 -->
+    <!-- 彻底修复：只保留唯一的、确定版本的映射，移除所有 ^ 符号 -->
     <script type="importmap">
 {
   "imports": {
@@ -79,7 +75,6 @@
             <p style="margin-top: 20px; font-weight: 900; letter-spacing: 0.4em; color: #4f46e5; font-size: 10px; text-transform: uppercase;">Initializing Neural Link...</p>
         </div>
     </div>
-    <!-- 确保使用相对路径 -->
     <script type="module" src="./index.tsx"></script>
 </body>
 </html>
