@@ -14,3 +14,10 @@ root.render(
     <App />
   </React.StrictMode>
 );
+
+// 应用挂载成功，清除 HTML 中的超时定时器
+// @ts-ignore
+if (window.loadTimer) {
+  // @ts-ignore
+  clearTimeout(window.loadTimer);
+}
