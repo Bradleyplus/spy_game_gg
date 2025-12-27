@@ -78,6 +78,17 @@
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
 
+        // --- Constants ---
+        const FALLBACK_PAIRS = [
+            { civilian: "Apple", spy: "Pear" },
+            { civilian: "Mountain", spy: "Hill" },
+            { civilian: "Coffee", spy: "Tea" },
+            { civilian: "Pen", spy: "Pencil" },
+            { civilian: "Milk", spy: "Yogurt" },
+            { civilian: "Sun", spy: "Moon" },
+            { civilian: "Doctor", spy: "Nurse" }
+        ];
+
         // --- State Management ---
         let state = {
             user: JSON.parse(localStorage.getItem('spy_user') || 'null'),
@@ -97,6 +108,11 @@
 
         const BOT_NAMES = ["Agent Alpha", "Cipher Beta", "Ghost Gamma", "Shadow Delta", "Echo Epsilon", "Rogue Zeta", "Spectre Eta"];
 
+        // --- Helper Functions ---
+        function cleanJson(text) {
+            return text.replace(/```json/g, "").replace(/```/g, "").trim();
+        }
+
         // --- Core Functions ---
         async function generateAIAvatar(name) {
             if (!name) return alert("Enter nickname first!");
@@ -107,7 +123,7 @@
                 const response = await ai.models.generateContent({
                     model: 'gemini-2.5-flash-image',
                     contents: {
-                        parts: [{ text: `A professional, minimalist, sleek spy profile icon for a character named '${name}'. Cyberpunk noir aesthetic, flat vector style, bold lines, high contrast, circular composition, indigo and silver color palette.` }]
+                        parts: [{ text: `A professional, minimalist, sleek spy profile icon for a character named '${name}'. Cyberpunk noir aesthetic, flat vector style.` }]
                     }
                 });
 
@@ -119,7 +135,6 @@
                 }
             } catch (e) {
                 console.error(e);
-                alert("AI generation failed. Using default.");
             } finally {
                 state.generatingAvatar = false;
                 render();
@@ -155,10 +170,7 @@
                         votedFor: null,
                         seatIndex: 0
                     }
-                },
-                winner: null,
-                eliminatedPlayerId: null,
-                discussionEndTime: null
+                }
             };
             await set(ref(db, `rooms/${roomId}`), newRoom);
             listenToRoom(roomId);
@@ -183,7 +195,6 @@
                 return;
             }
 
-            // Find first empty seat index
             const takenSeats = playersList.map(p => p.seatIndex);
             let seatIndex = 0;
             for (let i = 0; i < 7; i++) {
@@ -209,15 +220,13 @@
             onValue(ref(db, `rooms/${roomId}`), (snapshot) => {
                 const data = snapshot.val();
                 if (data) {
-                    // Check if current user was kicked
                     if (state.user && (!data.players || !data.players[state.user.id])) {
                         state.room = null;
-                        alert("Access Denied: You have been removed from this operation by the Director.");
+                        alert("Access Denied: You have been removed from this operation.");
                         render();
                         return;
                     }
                     
-                    // Host Migration Logic
                     const players = Object.values(data.players || {});
                     const currentHost = players.find(p => p.isHost && !p.isBot);
                     if (!currentHost && players.length > 0) {
@@ -272,16 +281,17 @@
 
         async function startGame() {
             const players = Object.values(state.room.players);
-            if (players.length < 3) return alert("Operation requires at least 3 agents (humans or bots)!");
+            if (players.length < 3) return alert("Operation requires at least 3 agents!");
 
             state.loading = true;
             render();
 
+            let pair;
             try {
                 const ai = new GoogleGenAI({ apiKey: window.process.env.API_KEY });
                 const response = await ai.models.generateContent({
                     model: "gemini-3-flash-preview",
-                    contents: "Generate 1 pair of English words for 'Who is the Spy'. Concepts should be very close (e.g., Apple vs Pear).",
+                    contents: "Generate 1 pair of words for 'Who is the Spy'. Output JSON only.",
                     config: {
                         responseMimeType: "application/json",
                         responseSchema: {
@@ -298,7 +308,15 @@
                     }
                 });
                 
-                const pair = JSON.parse(response.text)[0];
+                const cleaned = cleanJson(response.text || "");
+                pair = JSON.parse(cleaned)[0];
+                if (!pair) throw new Error("No pair generated");
+            } catch (e) {
+                console.warn("AI generation failed, using fallback:", e);
+                pair = FALLBACK_PAIRS[Math.floor(Math.random() * FALLBACK_PAIRS.length)];
+            }
+
+            try {
                 const shuffled = [...players].sort(() => Math.random() - 0.5);
                 const spyId = shuffled[0].id;
                 const blankId = (shuffled.length === 7) ? shuffled[1].id : null;
@@ -325,7 +343,7 @@
                 await update(ref(db), updates);
             } catch (e) {
                 console.error(e);
-                alert("Critical Error: Intelligence gathering failed.");
+                alert("Critical Error: Intelligence transmission failed.");
             } finally {
                 state.loading = false;
                 render();
@@ -442,7 +460,6 @@
             const me = state.room.players[state.user.id];
             const isHost = me.isHost;
 
-            // Define 7 seats grid
             const seats = new Array(7).fill(null);
             playersList.forEach((p) => { seats[p.seatIndex] = p; });
 
@@ -467,7 +484,6 @@
                                         <img src="${p.avatar}" class="w-full h-full object-cover">
                                     </div>
                                     <span class="text-[10px] font-black uppercase text-center px-2 truncate w-full">${p.name} ${p.isBot ? '(BOT)' : ''}</span>
-                                    ${p.isHost ? `<span class="absolute top-3 left-3 text-[7px] font-black bg-amber-500 text-slate-950 px-1.5 py-0.5 rounded-full uppercase">Director</span>` : ''}
                                     ${isHost && p.id !== state.user.id ? `
                                         <button onclick="window.kickPlayer('${p.id}')" class="absolute -top-2 -right-2 bg-rose-600 hover:bg-rose-500 text-white text-[8px] font-black px-3 py-1.5 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">KICK AGENT</button>
                                     ` : ''}
@@ -483,16 +499,13 @@
 
                     <div class="flex flex-col sm:flex-row gap-4">
                         ${isHost ? `
-                            <button onclick="window.addBot()" ${playersList.length >= 7 ? 'disabled' : ''} class="flex-1 py-5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-[2rem] font-black text-lg transition-all border border-slate-700 active:scale-95 disabled:opacity-30 flex items-center justify-center gap-3">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
-                                INSERT BOT AGENT
-                            </button>
-                            <button onclick="window.startGame()" ${playersList.length < 3 ? 'disabled' : ''} class="flex-[2] py-5 rounded-[2rem] font-black text-2xl transition-all shadow-2xl active:scale-95 ${playersList.length >= 3 ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white' : 'bg-slate-800 text-slate-600 opacity-50'}">
-                                ${playersList.length < 3 ? `NEED ${3 - playersList.length} MORE` : 'BEGIN OPERATION'}
+                            <button onclick="window.addBot()" ${playersList.length >= 7 ? 'disabled' : ''} class="flex-1 py-5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-[2rem] font-black text-lg transition-all border border-slate-700 active:scale-95 disabled:opacity-30">INSERT BOT</button>
+                            <button onclick="window.startGame()" ${playersList.length < 3 ? 'disabled' : ''} class="flex-[2] py-5 rounded-[2rem] font-black text-2xl transition-all shadow-2xl active:scale-95 ${playersList.length >= 3 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-600 opacity-50'}">
+                                ${state.loading ? 'FETCHING INTEL...' : 'BEGIN MISSION'}
                             </button>
                         ` : `
-                            <div class="w-full py-5 bg-slate-900/50 border border-slate-800 rounded-[2rem] flex flex-col items-center justify-center animate-pulse">
-                                <span class="text-slate-500 font-black text-sm tracking-widest uppercase">Waiting for Mission Director Briefing...</span>
+                            <div class="w-full py-5 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-center animate-pulse">
+                                <span class="text-slate-500 font-bold uppercase tracking-widest">Waiting for Mission Director...</span>
                             </div>
                         `}
                     </div>
@@ -508,13 +521,12 @@
             const players = Object.values(state.room.players);
             const isHost = me.isHost;
 
-            // --- Humanized Bot Voting Logic ---
             if (isHost && state.room.phase === 'voting') {
                 const pendingBots = players.filter(p => p.isBot && p.isAlive && !p.votedFor);
                 pendingBots.forEach(bot => {
                     if (!bot._voteTimerActive) {
                         bot._voteTimerActive = true;
-                        const delay = 2000 + Math.random() * 5000; // Human-like delay
+                        const delay = 2000 + Math.random() * 5000;
                         setTimeout(() => {
                             const aliveTargets = players.filter(p => p.isAlive);
                             const target = aliveTargets[Math.floor(Math.random() * aliveTargets.length)];
@@ -540,7 +552,7 @@
                                     <p class="text-xl font-black text-indigo-400 tracking-widest">DECRYPT INTEL</p>
                                     <p class="text-[10px] font-bold text-slate-600 mt-2 uppercase">Tap to reveal</p>
                                 </div>
-                                <div class="absolute inset-0 backface-hidden rotate-y-180 bg-gradient-to-br from-indigo-700 to-purple-800 rounded-[3rem] shadow-2xl flex flex-col items-center justify-center p-8 text-center">
+                                <div class="absolute inset-0 backface-hidden rotate-y-180 bg-indigo-600 rounded-[3rem] shadow-2xl flex flex-col items-center justify-center p-8 text-center">
                                     <p class="text-[10px] font-black uppercase text-indigo-200/50 tracking-widest mb-4">Clearance</p>
                                     <h3 class="text-3xl font-black text-white mb-6 uppercase tracking-tighter">${me.role}</h3>
                                     <div class="w-full h-px bg-white/10 mb-6"></div>
@@ -548,14 +560,14 @@
                                 </div>
                             </div>
                         </div>
-                        ${isHost ? `<button onclick="window.startVoting()" class="mt-12 px-12 py-5 bg-indigo-600 rounded-2xl font-black text-lg shadow-xl shadow-indigo-500/20 active:scale-95 transition-all">FORCE VOTE</button>` : ''}
+                        ${isHost ? `<button onclick="window.startVoting()" class="mt-12 px-12 py-5 bg-indigo-600 rounded-2xl font-black text-lg shadow-xl active:scale-95 transition-all">FORCE VOTE</button>` : ''}
                     </div>
                 `;
             } else if (state.room.phase === 'voting') {
                 const alive = players.filter(p => p.isAlive);
                 content = `
                     <div class="w-full max-w-md">
-                        <h2 class="text-4xl font-black text-center mb-10 text-white tracking-tighter uppercase">THE VOTE</h2>
+                        <h2 class="text-4xl font-black text-center mb-10 text-white uppercase tracking-tighter">THE VOTE</h2>
                         <div class="space-y-4">
                             ${alive.map(p => `
                                 <button onclick="window.doVote('${p.id}')" ${me.votedFor || !me.isAlive ? 'disabled' : ''} class="w-full flex items-center justify-between p-4 rounded-3xl border-2 transition-all ${me.votedFor === p.id ? 'bg-indigo-600 border-indigo-400 shadow-lg shadow-indigo-500/30' : 'bg-slate-900/50 border-slate-800'}">
@@ -564,8 +576,7 @@
                                         <span class="font-black text-xl text-white uppercase tracking-tight">${p.name} ${p.isBot ? '(BOT)' : ''}</span>
                                     </div>
                                     <div class="flex items-center gap-3">
-                                        ${p.votedFor ? `<span class="bg-indigo-500/20 text-indigo-300 text-[8px] font-bold px-2 py-1 rounded-full uppercase">LOCKED</span>` : `<span class="text-slate-600 text-[8px] font-bold uppercase animate-pulse">THINKING</span>`}
-                                        ${me.votedFor === p.id ? `<svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" /></svg>` : ''}
+                                        ${p.votedFor ? `<span class="bg-indigo-500/20 text-indigo-300 text-[8px] font-bold px-2 py-1 rounded-full uppercase tracking-tighter">LOCKED</span>` : `<span class="text-slate-600 text-[8px] font-bold uppercase animate-pulse">THINKING</span>`}
                                     </div>
                                 </button>
                             `).join('')}
@@ -578,11 +589,11 @@
                 content = `
                     <div class="text-center">
                         <div class="w-32 h-32 mx-auto rounded-3xl border-4 border-rose-600 overflow-hidden mb-6 shadow-2xl grayscale"><img src="${elim?.avatar || ''}" class="w-full h-full object-cover"></div>
-                        <h2 class="text-5xl font-black text-white mb-2 uppercase">${elim?.name || 'Unknown'}</h2>
+                        <h2 class="text-5xl font-black text-white mb-2 uppercase tracking-tighter">${elim?.name || 'Unknown'}</h2>
                         <p class="text-rose-500 font-black tracking-[0.5em] uppercase mb-12">Was Terminated</p>
                         <div class="glass-card p-10 rounded-[3rem] border-2 border-rose-500/20 max-w-xs mx-auto">
                             <p class="text-[10px] font-black uppercase opacity-50 mb-3 tracking-widest">Clearance was</p>
-                            <p class="text-4xl font-black text-indigo-400 uppercase">${elim?.role || '???'}</p>
+                            <p class="text-4xl font-black text-indigo-400 uppercase tracking-tighter">${elim?.role || '???'}</p>
                         </div>
                         ${isHost ? `<button onclick="window.nextRound()" class="mt-14 px-12 py-5 bg-slate-800 rounded-2xl font-black border border-slate-700 transition-all">RESUME MISSION</button>` : ''}
                     </div>
@@ -590,7 +601,7 @@
             } else if (state.room.phase === 'game_over') {
                 content = `
                     <div class="text-center w-full max-w-md">
-                        <h1 class="text-7xl font-black mb-6 tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-rose-500 to-indigo-500">END OP</h1>
+                        <h1 class="text-7xl font-black mb-6 tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-indigo-500">END OP</h1>
                         <h2 class="text-3xl font-black text-white mb-16 uppercase tracking-[0.4em]">${state.room.winner === 'civilians' ? 'LOYALISTS' : 'TRAITORS'} VICTORIOUS</h2>
                         <div class="grid grid-cols-2 gap-4 mb-14">
                             ${players.map(p => `
@@ -659,7 +670,7 @@
                 updates[`rooms/${state.room.id}/players/${p.id}/votedFor`] = null;
                 updates[`rooms/${state.room.id}/players/${p.id}/role`] = null;
                 updates[`rooms/${state.room.id}/players/${p.id}/word`] = null;
-                delete p._voteTimerActive; // Reset bot timers
+                delete p._voteTimerActive;
             });
             await update(ref(db), updates);
         };
@@ -676,13 +687,9 @@
             render();
         };
 
-        // Timer interval
         setInterval(() => { if (state.room?.phase === 'discussion') render(); }, 1000);
-
-        // Initial Render
         render();
 
-        // Host Auto-trigger for phase transition
         setInterval(async () => {
             if (state.room?.status === 'playing' && state.room?.phase === 'discussion' && state.room.players[state.user.id]?.isHost) {
                 if (Date.now() >= state.room.discussionEndTime) {
@@ -690,7 +697,6 @@
                 }
             }
         }, 2000);
-
     </script>
 </body>
 </html>
