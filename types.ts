@@ -25,7 +25,8 @@ export interface Player {
   word: string | null;
   isHost: boolean;
   isAlive: boolean;
-  votedFor: string | null; // ID of the player this player voted for
+  isBot: boolean; // Flag for AI players
+  votedFor: string | null;
 }
 
 export interface WordPair {
@@ -43,9 +44,4 @@ export interface Room {
   eliminatedPlayerId: string | null;
   winner: 'civilians' | 'spies' | null;
   discussionEndTime: number | null;
-}
-
-export interface SyncMessage {
-  type: 'ROOM_UPDATE';
-  room: Room;
 }

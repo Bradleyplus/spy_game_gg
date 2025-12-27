@@ -1,150 +1,86 @@
 
-import AV from 'leancloud-storage';
-import { Realtime } from 'leancloud-realtime';
+import { initializeApp } from "firebase/app";
+import { getDatabase, ref, onValue, set, get, child, remove, off } from "firebase/database";
 import { Room } from "../types.ts";
 
-const APP_ID = 'OZ7A77wckSsShsYVtTjbop9r-MdYXbMMI';
-const APP_KEY = 'SrRi1HPGUsd0sxeJZeesPsnS';
-const SERVER_URL = 'https://oz7a77wc.api.lncldglobal.com';
+// Firebase Configuration (Replace with your actual config if needed)
+// These are generic placeholders. In a production environment, use environment variables.
+const firebaseConfig = {
+  databaseURL: "https://undercover-game-default-rtdb.firebaseio.com",
+};
 
-// Handle global initialization
-try {
-  if (!AV.applicationId) {
-    console.log("SyncService: Initializing LeanCloud SDKs...");
-    
-    AV.init({
-      appId: APP_ID,
-      appKey: APP_KEY,
-      serverURL: SERVER_URL
-    });
-    
-    const realtime = new Realtime({
-      appId: APP_ID,
-      appKey: APP_KEY,
-      server: SERVER_URL
-    });
-    
-    // Bind realtime to AV for LiveQuery
-    // @ts-ignore
-    if (typeof AV.setRealtime === 'function') {
-      // @ts-ignore
-      AV.setRealtime(realtime);
-      console.log("SyncService: Realtime bound to Storage.");
-    } else {
-      console.warn("SyncService: AV.setRealtime not found, LiveQuery might not trigger.");
-    }
-    
-    console.log("SyncService: LeanCloud Core initialized.");
-  }
-} catch (e) {
-  console.error("Critical: LeanCloud failed to initialize.", e);
-}
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
 
 class SyncService {
-  private liveQuery: any = null;
+  private activeListeners: Record<string, any> = {};
 
   public async subscribe(roomId: string, callback: (room: Room) => void) {
-    try {
-      this.unsubscribe(roomId);
+    const roomRef = ref(db, `rooms/${roomId}`);
+    
+    // Cleanup previous listener if exists
+    this.unsubscribe(roomId);
 
-      const query = new AV.Query('GameRoom');
-      query.equalTo('roomCode', roomId);
-      
-      this.liveQuery = await query.subscribe();
-      console.log(`SyncService: Subscribed to LiveQuery for room ${roomId}`);
-      
-      this.liveQuery.on('create', (obj: any) => this.handleUpdate(obj, callback));
-      this.liveQuery.on('update', (obj: any) => this.handleUpdate(obj, callback));
-      this.liveQuery.on('enter', (obj: any) => this.handleUpdate(obj, callback));
+    const unsubscribe = onValue(roomRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        callback(data as Room);
+      }
+    });
 
-      this.liveQuery.on('delete', () => {
-        console.warn("SyncService: Room deleted remotely.");
-        // @ts-ignore
-        callback(null);
-      });
-
-      // Initial fetch
-      const initial = await this.getRoom(roomId);
-      if (initial) callback(initial);
-    } catch (err) {
-      console.error("SyncService: Subscription error", err);
-    }
-  }
-
-  private handleUpdate(obj: any, callback: (room: Room) => void) {
-    const payload = obj.get('payload');
-    if (payload) {
-      console.log("SyncService: Sync update received", payload.id);
-      callback(payload);
-    }
+    this.activeListeners[roomId] = unsubscribe;
   }
 
   public unsubscribe(roomId: string) {
-    if (this.liveQuery) {
-      console.log(`SyncService: Unsubscribing from ${roomId}`);
-      this.liveQuery.unsubscribe().catch(() => {});
-      this.liveQuery = null;
+    if (this.activeListeners[roomId]) {
+      const roomRef = ref(db, `rooms/${roomId}`);
+      off(roomRef);
+      delete this.activeListeners[roomId];
     }
   }
 
   public async broadcast(room: Room) {
     try {
-      const query = new AV.Query('GameRoom');
-      query.equalTo('roomCode', room.id);
-      let obj = await query.first();
-
-      if (!obj) {
-        const GameRoom = AV.Object.extend('GameRoom');
-        obj = new GameRoom();
-        obj.set('roomCode', room.id);
-      }
-
-      obj.set('payload', room);
-      const saved = await obj.save();
-      console.log("SyncService: Broadcast successful", saved.id);
-    } catch (err) {
-      console.error("SyncService: Broadcast failed", err);
+      const roomRef = ref(db, `rooms/${room.id}`);
+      await set(roomRef, room);
+    } catch (error) {
+      console.error("Firebase broadcast failed:", error);
     }
   }
 
   public async getRoom(roomId: string): Promise<Room | null> {
     try {
-      const query = new AV.Query('GameRoom');
-      query.equalTo('roomCode', roomId);
-      const obj = await query.first();
-      return obj ? (obj.get('payload') as Room) : null;
-    } catch (err) {
-      console.error("SyncService: getRoom failed", err);
+      const dbRef = ref(db);
+      const snapshot = await get(child(dbRef, `rooms/${roomId}`));
+      if (snapshot.exists()) {
+        return snapshot.val() as Room;
+      }
+      return null;
+    } catch (error) {
+      console.error("Firebase fetch failed:", error);
       return null;
     }
   }
 
   public async leaveRoom(roomId: string, userId: string) {
     try {
-      const query = new AV.Query('GameRoom');
-      query.equalTo('roomCode', roomId);
-      const obj = await query.first();
-
-      if (obj) {
-        const roomData = obj.get('payload') as Room;
-        const updatedPlayers = roomData.players.filter(p => p.id !== userId);
-
+      const room = await this.getRoom(roomId);
+      if (room) {
+        const updatedPlayers = room.players.filter(p => p.id !== userId);
         if (updatedPlayers.length === 0) {
-          await obj.destroy();
-          console.log("SyncService: Last player left, room destroyed.");
+          const roomRef = ref(db, `rooms/${roomId}`);
+          await remove(roomRef);
         } else {
+          // If host leaves, assign new host
           const hasHost = updatedPlayers.some(p => p.isHost);
           if (!hasHost && updatedPlayers.length > 0) {
             updatedPlayers[0].isHost = true;
           }
-          roomData.players = updatedPlayers;
-          obj.set('payload', roomData);
-          await obj.save();
-          console.log("SyncService: Player left, room updated.");
+          await this.broadcast({ ...room, players: updatedPlayers });
         }
       }
-    } catch (err) {
-      console.error("SyncService: leaveRoom failed", err);
+    } catch (error) {
+      console.error("Firebase leave failed:", error);
     }
   }
 }
