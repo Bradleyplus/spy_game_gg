@@ -2,7 +2,6 @@
 import React, { useState, useEffect } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { 
-  Player, 
   Room, 
   GameStatus, 
   GamePhase, 
@@ -22,15 +21,16 @@ const PREDEFINED_AVATARS = [
 
 const App: React.FC = () => {
   const [user, setUser] = useState<{ id: string, name: string, avatar: string } | null>(() => {
-    const saved = localStorage.getItem('spy_user');
-    return saved ? JSON.parse(saved) : null;
+    try {
+      const saved = localStorage.getItem('spy_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
   });
   const [room, setRoom] = useState<Room | null>(null);
   const [loading, setLoading] = useState(false);
   const [generatingAvatar, setGeneratingAvatar] = useState(false);
   const [selectedAvatar, setSelectedAvatar] = useState(PREDEFINED_AVATARS[0]);
 
-  // 当进入房间后，开启 Firebase 实时监听
   useEffect(() => {
     if (room?.id) {
       syncService.subscribe(room.id, (updatedRoom) => {
@@ -40,9 +40,12 @@ const App: React.FC = () => {
     }
   }, [room?.id]);
 
-  const getApiKey = () => {
-    // @ts-ignore
-    return process.env.API_KEY || window.process?.env?.API_KEY;
+  const getApiKey = (): string => {
+    try {
+      if (typeof process !== 'undefined' && process.env?.API_KEY) return process.env.API_KEY;
+      // @ts-ignore
+      return window.process?.env?.API_KEY || "";
+    } catch { return ""; }
   };
 
   const generateAIAvatar = async (name: string) => {
