@@ -6,11 +6,11 @@ import {
   GameStatus, 
   GamePhase, 
   GameRole 
-} from "./types";
-import { syncService } from "./services/SyncService";
-import { fetchWordPairs } from "./services/geminiService";
-import WaitingRoom from "./components/WaitingRoom";
-import GameRoom from "./components/GameRoom";
+} from "./types.ts";
+import { syncService } from "./services/SyncService.ts";
+import { fetchWordPairs } from "./services/geminiService.ts";
+import WaitingRoom from "./components/WaitingRoom.tsx";
+import GameRoom from "./components/GameRoom.tsx";
 
 const PREDEFINED_AVATARS = [
   "https://api.dicebear.com/7.x/bottts-neutral/svg?seed=Felix",
@@ -41,17 +41,17 @@ const App: React.FC = () => {
   }, [room?.id]);
 
   const getApiKey = (): string => {
-    try {
-      if (typeof process !== 'undefined' && process.env?.API_KEY) return process.env.API_KEY;
-      // @ts-ignore
-      return window.process?.env?.API_KEY || "";
-    } catch { return ""; }
+    // @ts-ignore
+    return window.process?.env?.API_KEY || "";
   };
 
   const generateAIAvatar = async (name: string) => {
     if (!name.trim()) return;
     const apiKey = getApiKey();
-    if (!apiKey) return;
+    if (!apiKey) {
+      alert("AI Generation requires an API Key.");
+      return;
+    }
 
     setGeneratingAvatar(true);
     try {
@@ -249,7 +249,7 @@ const App: React.FC = () => {
 
   if (!user) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-950 overflow-y-auto">
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-950">
         <h1 className="text-5xl font-black mb-12 tracking-tighter text-transparent bg-clip-text bg-gradient-to-br from-indigo-400 to-purple-500 uppercase">Undercover</h1>
         <div className="glass-card w-full max-w-sm p-8 rounded-3xl shadow-2xl space-y-6">
           <div>
@@ -321,22 +321,22 @@ const App: React.FC = () => {
     );
   }
 
-  if (room.status === GameStatus.WAITING) {
-    return <div className="min-h-screen flex flex-col items-center p-6 bg-slate-950"><WaitingRoom room={room} userId={user.id} onStart={startGame} onLeave={leaveRoom} isLoading={loading} /></div>;
-  }
-
   return (
     <div className="min-h-screen flex flex-col items-center p-6 bg-slate-950">
-      <GameRoom 
-        room={room} 
-        userId={user.id} 
-        onReset={resetRoom} 
-        onLeave={leaveRoom} 
-        onCastVote={castVote} 
-        onStartVoting={() => syncService.broadcast({ ...room, phase: GamePhase.VOTING })}
-        onEndVoting={resolveVoting}
-        onNextRound={() => syncService.broadcast({ ...room, phase: GamePhase.DISCUSSION, discussionEndTime: Date.now() + 180000 })}
-      />
+      {room.status === GameStatus.WAITING ? (
+        <WaitingRoom room={room} userId={user.id} onStart={startGame} onLeave={leaveRoom} isLoading={loading} />
+      ) : (
+        <GameRoom 
+          room={room} 
+          userId={user.id} 
+          onReset={resetRoom} 
+          onLeave={leaveRoom} 
+          onCastVote={castVote} 
+          onStartVoting={() => syncService.broadcast({ ...room, phase: GamePhase.VOTING })}
+          onEndVoting={resolveVoting}
+          onNextRound={() => syncService.broadcast({ ...room, phase: GamePhase.DISCUSSION, discussionEndTime: Date.now() + 180000 })}
+        />
+      )}
     </div>
   );
 };

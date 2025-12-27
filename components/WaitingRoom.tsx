@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Room } from '../types';
+import { Room } from '../types.ts';
 
 interface WaitingRoomProps {
   room: Room;
@@ -91,12 +91,6 @@ const WaitingRoom: React.FC<WaitingRoomProps> = ({ room, userId, onStart, onLeav
           <div className="w-full py-5 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col items-center justify-center animate-pulse">
             <span className="text-slate-400 font-bold text-sm tracking-widest">WAITING FOR HOST...</span>
           </div>
-        )}
-        
-        {!canStart && isHost && (
-          <p className="text-center text-xs font-semibold text-rose-500 uppercase tracking-wider">
-            Need 3-7 players to begin
-          </p>
         )}
       </div>
     </div>

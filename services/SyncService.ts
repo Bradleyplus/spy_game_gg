@@ -1,7 +1,7 @@
 
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, set, update, onValue, get, remove, off } from "firebase/database";
-import { Room } from "../types";
+import { getDatabase, ref, set, onValue, get, remove, off } from "firebase/database";
+import { Room } from "../types.ts";
 
 const firebaseConfig = {
     apiKey: "AIzaSyDVVVUN5OqatqjSrvLwU3tLJXLKbZMW1bA",
@@ -17,19 +17,11 @@ const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
 class SyncService {
-  private currentRoomId: string | null = null;
-
-  /**
-   * 监听房间变化
-   */
   public subscribe(roomId: string, callback: (room: Room) => void) {
-    this.currentRoomId = roomId;
     const roomRef = ref(db, `rooms/${roomId}`);
     onValue(roomRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        // Firebase 存储的是对象，我们需要确保格式符合我们的 Room 接口
-        // 如果数据中没有 players 数组（Firebase 存储会自动把索引转为对象），手动转换
         const playersData = data.players || {};
         const players = Array.isArray(playersData) ? playersData : Object.values(playersData);
         callback({ ...data, players });
@@ -45,17 +37,11 @@ class SyncService {
     off(roomRef);
   }
 
-  /**
-   * 更新房间数据到 Firebase
-   */
   public async broadcast(room: Room) {
     const roomRef = ref(db, `rooms/${room.id}`);
     await set(roomRef, room);
   }
 
-  /**
-   * 获取单个房间数据（一次性）
-   */
   public async getRoom(roomId: string): Promise<Room | null> {
     const snapshot = await get(ref(db, `rooms/${roomId}`));
     if (snapshot.exists()) {
