@@ -56,7 +56,7 @@
 </head>
 <body>
     <div id="app" class="min-h-screen flex flex-col items-center justify-center p-4">
-        <!-- App content injected here -->
+        <div class="text-indigo-400 font-bold animate-pulse">Initializing Systems...</div>
     </div>
 
     <script type="module">
@@ -65,10 +65,11 @@
         import { GoogleGenAI, Type } from "https://esm.sh/@google/genai@^1.34.0";
 
         // --- Configuration ---
+        // 注意：如果运行报错，请尝试将 databaseURL 改为 "https://spy-game-01.firebaseio.com"
         const firebaseConfig = {
             apiKey: "AIzaSyDVVVUN5OqatqjSrvLwU3tLJXLKbZMW1bA",
             authDomain: "spy-game-01.firebaseapp.com",
-            databaseURL: "https://spy-game-01-default-rtdb.firebaseio.com",
+            databaseURL: "https://spy-game-01-default-rtdb.firebaseio.com", 
             projectId: "spy-game-01",
             storageBucket: "spy-game-01.firebasestorage.app",
             messagingSenderId: "316027229274",
@@ -110,20 +111,30 @@
 
         // --- Helper Functions ---
         function cleanJson(text) {
+            if (!text) return "";
             return text.replace(/```json/g, "").replace(/```/g, "").trim();
+        }
+
+        function getApiKey() {
+            try {
+                return (typeof process !== 'undefined' && process.env?.API_KEY) || window.process?.env?.API_KEY || "";
+            } catch(e) { return ""; }
         }
 
         // --- Core Functions ---
         async function generateAIAvatar(name) {
             if (!name) return alert("Enter nickname first!");
+            const key = getApiKey();
+            if (!key) return; // Silent skip if no key
+            
             state.generatingAvatar = true;
             render();
             try {
-                const ai = new GoogleGenAI({ apiKey: window.process.env.API_KEY });
+                const ai = new GoogleGenAI({ apiKey: key });
                 const response = await ai.models.generateContent({
                     model: 'gemini-2.5-flash-image',
                     contents: {
-                        parts: [{ text: `A professional, minimalist, sleek spy profile icon for a character named '${name}'. Cyberpunk noir aesthetic, flat vector style.` }]
+                        parts: [{ text: `A professional, minimalist, sleek spy profile icon for a character named '${name}'. Cyberpunk noir aesthetic.` }]
                     }
                 });
 
@@ -134,7 +145,7 @@
                     }
                 }
             } catch (e) {
-                console.error(e);
+                console.warn("Avatar Gen failed, ignoring.");
             } finally {
                 state.generatingAvatar = false;
                 render();
@@ -172,48 +183,62 @@
                     }
                 }
             };
-            await set(ref(db, `rooms/${roomId}`), newRoom);
-            listenToRoom(roomId);
+            try {
+                await set(ref(db, `rooms/${roomId}`), newRoom);
+                listenToRoom(roomId);
+            } catch (e) {
+                console.error("Firebase Create Failed:", e);
+                alert("Database Error: " + e.message + "\nCheck if Firebase rules allow read/write.");
+                state.loading = false;
+                render();
+            }
         }
 
         async function joinRoom(roomId) {
             state.loading = true;
             render();
-            const snapshot = await get(ref(db, `rooms/${roomId}`));
-            if (!snapshot.exists()) {
-                alert("Room not found!");
-                state.loading = false;
-                render();
-                return;
-            }
-            const data = snapshot.val();
-            const playersList = Object.values(data.players || {});
-            if (playersList.length >= 7) {
-                alert("Room full!");
-                state.loading = false;
-                render();
-                return;
-            }
-
-            const takenSeats = playersList.map(p => p.seatIndex);
-            let seatIndex = 0;
-            for (let i = 0; i < 7; i++) {
-                if (!takenSeats.includes(i)) {
-                    seatIndex = i;
-                    break;
+            try {
+                const snapshot = await get(ref(db, `rooms/${roomId}`));
+                if (!snapshot.exists()) {
+                    alert("Room not found!");
+                    state.loading = false;
+                    render();
+                    return;
                 }
-            }
+                const data = snapshot.val();
+                const playersList = Object.values(data.players || {});
+                if (playersList.length >= 7) {
+                    alert("Room full!");
+                    state.loading = false;
+                    render();
+                    return;
+                }
 
-            await update(ref(db, `rooms/${roomId}/players/${state.user.id}`), {
-                id: state.user.id,
-                name: state.user.name,
-                avatar: state.user.avatar,
-                isHost: false,
-                isAlive: true,
-                votedFor: null,
-                seatIndex: seatIndex
-            });
-            listenToRoom(roomId);
+                const takenSeats = playersList.map(p => p.seatIndex);
+                let seatIndex = 0;
+                for (let i = 0; i < 7; i++) {
+                    if (!takenSeats.includes(i)) {
+                        seatIndex = i;
+                        break;
+                    }
+                }
+
+                await update(ref(db, `rooms/${roomId}/players/${state.user.id}`), {
+                    id: state.user.id,
+                    name: state.user.name,
+                    avatar: state.user.avatar,
+                    isHost: false,
+                    isAlive: true,
+                    votedFor: null,
+                    seatIndex: seatIndex
+                });
+                listenToRoom(roomId);
+            } catch (e) {
+                console.error("Firebase Join Failed:", e);
+                alert("Join Error: " + e.message);
+                state.loading = false;
+                render();
+            }
         }
 
         function listenToRoom(roomId) {
@@ -222,20 +247,10 @@
                 if (data) {
                     if (state.user && (!data.players || !data.players[state.user.id])) {
                         state.room = null;
-                        alert("Access Denied: You have been removed from this operation.");
+                        alert("Session Expired: You were removed from this room.");
                         render();
                         return;
                     }
-                    
-                    const players = Object.values(data.players || {});
-                    const currentHost = players.find(p => p.isHost && !p.isBot);
-                    if (!currentHost && players.length > 0) {
-                        const firstHuman = players.find(p => !p.isBot);
-                        if (firstHuman && firstHuman.id === state.user.id) {
-                            update(ref(db, `rooms/${roomId}/players/${state.user.id}`), { isHost: true });
-                        }
-                    }
-
                     state.room = data;
                     state.loading = false;
                     render();
@@ -243,6 +258,8 @@
                     state.room = null;
                     render();
                 }
+            }, (error) => {
+                console.error("Sync Error:", error);
             });
         }
 
@@ -274,45 +291,32 @@
             });
         }
 
-        async function kickPlayer(playerId) {
-            if (playerId === state.user.id) return;
-            await remove(ref(db, `rooms/${state.room.id}/players/${playerId}`));
-        }
-
         async function startGame() {
             const players = Object.values(state.room.players);
-            if (players.length < 3) return alert("Operation requires at least 3 agents!");
+            if (players.length < 3) return alert("Need at least 3 players!");
 
             state.loading = true;
             render();
 
-            let pair;
-            try {
-                const ai = new GoogleGenAI({ apiKey: window.process.env.API_KEY });
-                const response = await ai.models.generateContent({
-                    model: "gemini-3-flash-preview",
-                    contents: "Generate 1 pair of words for 'Who is the Spy'. Output JSON only.",
-                    config: {
-                        responseMimeType: "application/json",
-                        responseSchema: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    civilian: { type: Type.STRING },
-                                    spy: { type: Type.STRING }
-                                },
-                                required: ["civilian", "spy"]
-                            }
-                        }
-                    }
-                });
-                
-                const cleaned = cleanJson(response.text || "");
-                pair = JSON.parse(cleaned)[0];
-                if (!pair) throw new Error("No pair generated");
-            } catch (e) {
-                console.warn("AI generation failed, using fallback:", e);
+            let pair = null;
+            const apiKey = getApiKey();
+            
+            if (apiKey) {
+                try {
+                    const ai = new GoogleGenAI({ apiKey: apiKey });
+                    const response = await ai.models.generateContent({
+                        model: "gemini-3-flash-preview",
+                        contents: "Generate 1 pair of simple nouns for 'Who is the Spy'. Output JSON only: [{'civilian': '...', 'spy': '...'}]",
+                        config: { responseMimeType: "application/json" }
+                    });
+                    const parsed = JSON.parse(cleanJson(response.text));
+                    pair = Array.isArray(parsed) ? parsed[0] : parsed;
+                } catch (e) {
+                    console.warn("AI Word Gen failed, using internal dictionary.");
+                }
+            }
+
+            if (!pair || !pair.civilian) {
                 pair = FALLBACK_PAIRS[Math.floor(Math.random() * FALLBACK_PAIRS.length)];
             }
 
@@ -326,7 +330,7 @@
                     let role = 'civilian';
                     let word = pair.civilian;
                     if (p.id === spyId) { role = 'spy'; word = pair.spy; }
-                    else if (p.id === blankId) { role = 'blank'; word = "NOTHING FOUND (BLANK)"; }
+                    else if (p.id === blankId) { role = 'blank'; word = "BLANK"; }
                     
                     updates[`rooms/${state.room.id}/players/${p.id}/role`] = role;
                     updates[`rooms/${state.room.id}/players/${p.id}/word`] = word;
@@ -337,13 +341,12 @@
                 updates[`rooms/${state.room.id}/status`] = 'playing';
                 updates[`rooms/${state.room.id}/phase`] = 'discussion';
                 updates[`rooms/${state.room.id}/winner`] = null;
-                updates[`rooms/${state.room.id}/eliminatedPlayerId`] = null;
                 updates[`rooms/${state.room.id}/discussionEndTime`] = Date.now() + 180000;
 
                 await update(ref(db), updates);
             } catch (e) {
-                console.error(e);
-                alert("Critical Error: Intelligence transmission failed.");
+                console.error("Game Start Write Failed:", e);
+                alert("Critical System Failure: Could not broadcast start signal to Firebase.");
             } finally {
                 state.loading = false;
                 render();
@@ -388,7 +391,6 @@
             updates[`rooms/${state.room.id}/phase`] = winner ? 'game_over' : 'elimination';
             updates[`rooms/${state.room.id}/winner`] = winner;
             updates[`rooms/${state.room.id}/eliminatedPlayerId`] = eliminatedId;
-            updates[`rooms/${state.room.id}/discussionEndTime`] = null;
 
             await update(ref(db), updates);
         }
@@ -398,7 +400,7 @@
             const appDiv = document.getElementById('app');
             if (!state.user) return renderLobby(appDiv);
             if (!state.room) return renderJoinCreate(appDiv);
-            if (state.room.status === 'waiting') return renderWaitingRoom(appDiv);
+            if (state.room.status === 'waiting' || !state.room.status) return renderWaitingRoom(appDiv);
             return renderGameRoom(appDiv);
         }
 
@@ -406,25 +408,22 @@
             container.innerHTML = `
                 <div class="w-full max-w-sm flex flex-col items-center">
                     <h1 class="text-6xl font-black mb-12 tracking-tighter text-transparent bg-clip-text bg-gradient-to-br from-indigo-400 to-purple-500 uppercase">Undercover</h1>
-                    <div class="glass-card w-full p-8 rounded-[2.5rem] shadow-2xl space-y-8 border-indigo-500/20">
+                    <div class="glass-card w-full p-8 rounded-[2.5rem] shadow-2xl space-y-8">
                         <div>
-                            <label class="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 ml-1">Agent Handle</label>
-                            <input id="nameInput" type="text" placeholder="Identity name..." class="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-bold">
+                            <label class="block text-[10px] font-black text-slate-500 uppercase mb-3 ml-1">Agent Handle</label>
+                            <input id="nameInput" type="text" placeholder="Identity name..." class="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold">
                         </div>
-                        <div>
-                            <label class="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 ml-1">Identify Icon</label>
-                            <div class="grid grid-cols-4 gap-2 mb-4">
-                                ${PREDEFINED_AVATARS.map(url => `
-                                    <div onclick="window.selectAvatar('${url}')" class="relative aspect-square rounded-xl overflow-hidden border-2 cursor-pointer transition-all ${state.selectedAvatar === url ? 'border-indigo-500 scale-105 shadow-lg shadow-indigo-500/20' : 'border-slate-800 opacity-60'}">
-                                        <img src="${url}" class="w-full h-full object-cover">
-                                    </div>
-                                `).join('')}
-                                <div onclick="window.triggerAIGen()" class="relative aspect-square rounded-xl border-2 border-dashed border-slate-800 flex flex-col items-center justify-center cursor-pointer hover:border-indigo-500 transition-all ${state.generatingAvatar ? 'animate-pulse' : ''}">
-                                    ${state.selectedAvatar.startsWith('data:') ? `<img src="${state.selectedAvatar}" class="w-full h-full object-cover rounded-lg">` : `<span class="text-[8px] font-black text-indigo-400 uppercase text-center leading-tight">AI<br>GEN</span>`}
+                        <div class="grid grid-cols-4 gap-2">
+                            ${PREDEFINED_AVATARS.map(url => `
+                                <div onclick="window.selectAvatar('${url}')" class="relative aspect-square rounded-xl overflow-hidden border-2 cursor-pointer ${state.selectedAvatar === url ? 'border-indigo-500 scale-105' : 'border-slate-800 opacity-60'}">
+                                    <img src="${url}" class="w-full h-full object-cover">
                                 </div>
+                            `).join('')}
+                            <div onclick="window.triggerAIGen()" class="relative aspect-square rounded-xl border-2 border-dashed border-slate-800 flex items-center justify-center cursor-pointer ${state.generatingAvatar ? 'animate-pulse' : ''}">
+                                ${state.selectedAvatar.startsWith('data:') ? `<img src="${state.selectedAvatar}" class="w-full h-full object-cover rounded-lg">` : `<span class="text-[8px] font-black text-indigo-400">AI GEN</span>`}
                             </div>
                         </div>
-                        <button onclick="window.doLogin()" class="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black text-lg transition-all active:scale-95 shadow-xl shadow-indigo-900/40">COMMENCE MISSION</button>
+                        <button onclick="window.doLogin()" class="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black text-lg shadow-xl">COMMENCE MISSION</button>
                     </div>
                 </div>
             `;
@@ -434,21 +433,14 @@
             container.innerHTML = `
                 <div class="w-full max-w-sm flex flex-col items-center">
                     <div class="text-center mb-12 flex flex-col items-center">
-                        <div class="w-24 h-24 rounded-[2rem] border-2 border-indigo-500/30 overflow-hidden mb-4 shadow-2xl">
-                            <img src="${state.user.avatar}" class="w-full h-full object-cover" alt="me" />
-                        </div>
-                        <h2 class="text-sm font-black text-indigo-400 uppercase tracking-[0.4em] mb-1">Status: Active</h2>
+                        <div class="w-24 h-24 rounded-[2rem] border-2 border-indigo-500/30 overflow-hidden mb-4 shadow-2xl"><img src="${state.user.avatar}" class="w-full h-full object-cover"></div>
                         <p class="text-3xl font-black text-white">${state.user.name}</p>
                     </div>
                     <div class="w-full space-y-4">
-                        <button onclick="window.createRoom()" class="w-full py-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-[2rem] font-black text-xl transition-all shadow-xl active:scale-95">ESTABLISH SECTOR</button>
-                        <div class="relative py-4 text-center">
-                            <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-800"></div></div>
-                            <span class="relative bg-slate-950 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Infiltrate Room</span>
-                        </div>
+                        <button onclick="window.createRoom()" class="w-full py-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-[2rem] font-black text-xl shadow-xl">NEW SECTOR</button>
                         <div class="flex gap-2">
-                            <input id="roomInput" type="number" placeholder="4-digit ID" class="flex-1 bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-center text-xl text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                            <button onclick="window.doJoin()" class="px-8 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl font-black transition-all">JOIN</button>
+                            <input id="roomInput" type="number" placeholder="4-digit ID" class="flex-1 bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-center text-xl text-white font-mono">
+                            <button onclick="window.doJoin()" class="px-8 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl font-black">JOIN</button>
                         </div>
                     </div>
                 </div>
@@ -458,60 +450,37 @@
         function renderWaitingRoom(container) {
             const playersList = Object.values(state.room.players || {});
             const me = state.room.players[state.user.id];
-            const isHost = me.isHost;
-
-            const seats = new Array(7).fill(null);
-            playersList.forEach((p) => { seats[p.seatIndex] = p; });
+            const isHost = me?.isHost;
 
             container.innerHTML = `
-                <div class="w-full max-w-2xl animate-in fade-in zoom-in duration-300">
+                <div class="w-full max-w-2xl">
                     <div class="flex flex-col md:flex-row justify-between items-center mb-10 gap-6">
                         <div class="text-center md:text-left">
-                            <h2 class="text-xs font-black text-indigo-400 uppercase tracking-[0.4em] mb-2">Sector ID</h2>
-                            <p class="text-6xl font-mono font-black text-white tracking-tighter">${state.room.id}</p>
+                            <h2 class="text-xs font-black text-indigo-400 uppercase tracking-widest mb-2">Sector ID</h2>
+                            <p class="text-6xl font-mono font-black text-white">${state.room.id}</p>
                         </div>
-                        <div class="flex flex-col items-center md:items-end">
-                             <p class="text-[10px] font-black text-slate-500 uppercase mb-2">Personnel</p>
-                             <div class="text-2xl font-black text-white bg-slate-900/50 px-6 py-2 rounded-full border border-slate-800">${playersList.length} / 7 Locked</div>
-                        </div>
+                        <div class="text-2xl font-black text-white bg-slate-900/50 px-6 py-2 rounded-full border border-slate-800">${playersList.length} / 7 Locked</div>
                     </div>
 
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-12">
-                        ${seats.map((p, idx) => `
-                            <div class="relative group h-40 glass-card rounded-[2rem] flex flex-col items-center justify-center border-2 transition-all ${p ? (p.id === state.user.id ? 'border-indigo-500 bg-indigo-600/10 animate-pulse-indigo' : 'border-slate-800 bg-slate-900/40') : 'border-dashed border-slate-800 opacity-40'}">
-                                ${p ? `
-                                    <div class="w-16 h-16 rounded-2xl overflow-hidden mb-3 border-2 ${p.isHost ? 'border-amber-500 shadow-lg shadow-amber-500/20' : 'border-slate-700'}">
-                                        <img src="${p.avatar}" class="w-full h-full object-cover">
-                                    </div>
-                                    <span class="text-[10px] font-black uppercase text-center px-2 truncate w-full">${p.name} ${p.isBot ? '(BOT)' : ''}</span>
-                                    ${isHost && p.id !== state.user.id ? `
-                                        <button onclick="window.kickPlayer('${p.id}')" class="absolute -top-2 -right-2 bg-rose-600 hover:bg-rose-500 text-white text-[8px] font-black px-3 py-1.5 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">KICK AGENT</button>
-                                    ` : ''}
-                                ` : `
-                                    <div class="w-10 h-10 rounded-full border-2 border-slate-800 border-dashed flex items-center justify-center text-slate-800">
-                                        <span class="text-xs">#${idx+1}</span>
-                                    </div>
-                                    <span class="text-[8px] font-black uppercase mt-2 text-slate-700">Empty Slot</span>
-                                `}
+                        ${playersList.map(p => `
+                            <div class="relative glass-card rounded-[2rem] p-6 border-2 flex flex-col items-center border-slate-800">
+                                <img src="${p.avatar}" class="w-16 h-16 rounded-2xl mb-3 border-2 border-slate-700">
+                                <span class="text-[10px] font-black uppercase text-center">${p.name} ${p.isBot ? '(BOT)' : ''}</span>
+                                ${isHost && p.id !== state.user.id ? `<button onclick="window.kickPlayer('${p.id}')" class="absolute -top-2 -right-2 bg-rose-600 text-white text-[8px] font-black px-2 py-1 rounded-full">KICK</button>` : ''}
                             </div>
                         `).join('')}
                     </div>
 
-                    <div class="flex flex-col sm:flex-row gap-4">
-                        ${isHost ? `
-                            <button onclick="window.addBot()" ${playersList.length >= 7 ? 'disabled' : ''} class="flex-1 py-5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-[2rem] font-black text-lg transition-all border border-slate-700 active:scale-95 disabled:opacity-30">INSERT BOT</button>
-                            <button onclick="window.startGame()" ${playersList.length < 3 ? 'disabled' : ''} class="flex-[2] py-5 rounded-[2rem] font-black text-2xl transition-all shadow-2xl active:scale-95 ${playersList.length >= 3 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-600 opacity-50'}">
-                                ${state.loading ? 'FETCHING INTEL...' : 'BEGIN MISSION'}
+                    ${isHost ? `
+                        <div class="flex gap-4">
+                            <button onclick="window.addBot()" class="flex-1 py-5 bg-slate-800 text-white rounded-[2rem] font-black">ADD BOT</button>
+                            <button onclick="window.startGame()" ${playersList.length < 3 ? 'disabled opacity-50' : ''} class="flex-[2] py-5 bg-indigo-600 text-white rounded-[2rem] font-black text-2xl">
+                                ${state.loading ? 'INITIATING...' : 'BEGIN OPERATION'}
                             </button>
-                        ` : `
-                            <div class="w-full py-5 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-center animate-pulse">
-                                <span class="text-slate-500 font-bold uppercase tracking-widest">Waiting for Mission Director...</span>
-                            </div>
-                        `}
-                    </div>
-                    <div class="mt-8 text-center">
-                        <button onclick="window.leaveRoom()" class="text-[10px] font-black text-slate-600 hover:text-rose-500 uppercase tracking-widest transition-all">Abort Assignment</button>
-                    </div>
+                        </div>
+                    ` : `<div class="w-full py-5 text-center text-slate-500 font-black animate-pulse">WAITING FOR DIRECTOR...</div>`}
+                    <button onclick="window.leaveRoom()" class="w-full mt-6 text-xs font-black text-slate-600 hover:text-rose-500 uppercase">Abort Assignment</button>
                 </div>
             `;
         }
@@ -519,126 +488,59 @@
         function renderGameRoom(container) {
             const me = state.room.players[state.user.id];
             const players = Object.values(state.room.players);
-            const isHost = me.isHost;
-
-            if (isHost && state.room.phase === 'voting') {
-                const pendingBots = players.filter(p => p.isBot && p.isAlive && !p.votedFor);
-                pendingBots.forEach(bot => {
-                    if (!bot._voteTimerActive) {
-                        bot._voteTimerActive = true;
-                        const delay = 2000 + Math.random() * 5000;
-                        setTimeout(() => {
-                            const aliveTargets = players.filter(p => p.isAlive);
-                            const target = aliveTargets[Math.floor(Math.random() * aliveTargets.length)];
-                            update(ref(db, `rooms/${state.room.id}/players/${bot.id}`), { votedFor: target.id });
-                        }, delay);
-                    }
-                });
-            }
+            const isHost = me?.isHost;
 
             let content = '';
             if (state.room.phase === 'discussion') {
                 const timeLeft = Math.max(0, Math.floor((state.room.discussionEndTime - Date.now()) / 1000));
                 content = `
                     <div class="flex flex-col items-center">
-                        <div class="mb-10 text-center">
-                            <p class="text-[10px] font-black text-slate-500 uppercase tracking-[0.5em] mb-2">Comms Secure</p>
-                            <div class="text-6xl font-mono font-black ${timeLeft < 30 ? 'text-rose-500 animate-pulse' : 'text-white'}">${String(Math.floor(timeLeft/60)).padStart(2,'0')}:${String(timeLeft%60).padStart(2,'0')}</div>
-                        </div>
-                        <div onclick="window.toggleReveal()" class="relative w-64 h-96 perspective-1000 cursor-pointer group">
+                        <div class="mb-10 text-6xl font-mono font-black ${timeLeft < 30 ? 'text-rose-500 animate-pulse' : 'text-white'}">${Math.floor(timeLeft/60)}:${String(timeLeft%60).padStart(2,'0')}</div>
+                        <div onclick="window.toggleReveal()" class="relative w-64 h-96 perspective-1000 cursor-pointer">
                             <div class="card-inner w-full h-full preserve-3d ${state.isRevealed ? 'card-flipped' : ''}">
-                                <div class="absolute inset-0 backface-hidden glass-card rounded-[3rem] border-4 border-indigo-500/20 shadow-2xl flex flex-col items-center justify-center p-8">
-                                    <div class="w-20 h-20 rounded-3xl overflow-hidden mb-6 border-4 border-indigo-500 shadow-xl"><img src="${me.avatar}" class="w-full h-full object-cover"></div>
-                                    <p class="text-xl font-black text-indigo-400 tracking-widest">DECRYPT INTEL</p>
-                                    <p class="text-[10px] font-bold text-slate-600 mt-2 uppercase">Tap to reveal</p>
+                                <div class="absolute inset-0 backface-hidden glass-card rounded-[3rem] border-4 border-indigo-500/20 flex flex-col items-center justify-center p-8">
+                                    <p class="text-xl font-black text-indigo-400">DECRYPT INTEL</p>
+                                    <p class="text-[10px] text-slate-600 mt-2 uppercase">Tap to reveal</p>
                                 </div>
-                                <div class="absolute inset-0 backface-hidden rotate-y-180 bg-indigo-600 rounded-[3rem] shadow-2xl flex flex-col items-center justify-center p-8 text-center">
-                                    <p class="text-[10px] font-black uppercase text-indigo-200/50 tracking-widest mb-4">Clearance</p>
-                                    <h3 class="text-3xl font-black text-white mb-6 uppercase tracking-tighter">${me.role}</h3>
-                                    <div class="w-full h-px bg-white/10 mb-6"></div>
-                                    <p class="text-5xl font-black text-white tracking-tight">${me.word}</p>
+                                <div class="absolute inset-0 backface-hidden rotate-y-180 bg-indigo-600 rounded-[3rem] flex flex-col items-center justify-center p-8 text-center">
+                                    <h3 class="text-2xl font-black text-white mb-6 uppercase">${me.role}</h3>
+                                    <p class="text-5xl font-black text-white">${me.word}</p>
                                 </div>
                             </div>
                         </div>
-                        ${isHost ? `<button onclick="window.startVoting()" class="mt-12 px-12 py-5 bg-indigo-600 rounded-2xl font-black text-lg shadow-xl active:scale-95 transition-all">FORCE VOTE</button>` : ''}
+                        ${isHost ? `<button onclick="window.startVoting()" class="mt-12 px-12 py-5 bg-indigo-600 rounded-2xl font-black text-lg">FORCE VOTE</button>` : ''}
                     </div>
                 `;
             } else if (state.room.phase === 'voting') {
                 const alive = players.filter(p => p.isAlive);
                 content = `
                     <div class="w-full max-w-md">
-                        <h2 class="text-4xl font-black text-center mb-10 text-white uppercase tracking-tighter">THE VOTE</h2>
+                        <h2 class="text-4xl font-black text-center mb-10 text-white uppercase">VOTING</h2>
                         <div class="space-y-4">
                             ${alive.map(p => `
-                                <button onclick="window.doVote('${p.id}')" ${me.votedFor || !me.isAlive ? 'disabled' : ''} class="w-full flex items-center justify-between p-4 rounded-3xl border-2 transition-all ${me.votedFor === p.id ? 'bg-indigo-600 border-indigo-400 shadow-lg shadow-indigo-500/30' : 'bg-slate-900/50 border-slate-800'}">
-                                    <div class="flex items-center gap-4">
-                                        <img src="${p.avatar}" class="w-14 h-14 rounded-2xl border-2 border-slate-700 object-cover ${!p.isAlive ? 'grayscale opacity-50' : ''}">
-                                        <span class="font-black text-xl text-white uppercase tracking-tight">${p.name} ${p.isBot ? '(BOT)' : ''}</span>
-                                    </div>
-                                    <div class="flex items-center gap-3">
-                                        ${p.votedFor ? `<span class="bg-indigo-500/20 text-indigo-300 text-[8px] font-bold px-2 py-1 rounded-full uppercase tracking-tighter">LOCKED</span>` : `<span class="text-slate-600 text-[8px] font-bold uppercase animate-pulse">THINKING</span>`}
-                                    </div>
+                                <button onclick="window.doVote('${p.id}')" ${me.votedFor || !me.isAlive ? 'disabled' : ''} class="w-full flex items-center justify-between p-4 rounded-3xl border-2 ${me.votedFor === p.id ? 'bg-indigo-600 border-indigo-400' : 'bg-slate-900/50 border-slate-800'}">
+                                    <span class="font-black text-xl text-white uppercase">${p.name}</span>
+                                    ${p.votedFor ? `<span class="bg-indigo-400/20 text-indigo-300 text-[8px] font-bold px-2 py-1 rounded-full uppercase">LOCKED</span>` : ''}
                                 </button>
                             `).join('')}
                         </div>
-                        ${isHost ? `<button onclick="window.resolveVoting()" class="w-full mt-12 py-6 bg-rose-600 rounded-[2rem] font-black text-xl shadow-2xl active:scale-95 transition-all">RESOLVE EXECUTION</button>` : ''}
+                        ${isHost ? `<button onclick="window.resolveVoting()" class="w-full mt-12 py-6 bg-rose-600 rounded-[2rem] font-black text-xl">RESOLVE</button>` : ''}
                     </div>
                 `;
-            } else if (state.room.phase === 'elimination') {
-                const elim = state.room.players[state.room.eliminatedPlayerId];
+            } else if (state.room.phase === 'elimination' || state.room.phase === 'game_over') {
+                const winnerText = state.room.winner ? `${state.room.winner.toUpperCase()} VICTORIOUS` : "MISSION SUSPENDED";
                 content = `
                     <div class="text-center">
-                        <div class="w-32 h-32 mx-auto rounded-3xl border-4 border-rose-600 overflow-hidden mb-6 shadow-2xl grayscale"><img src="${elim?.avatar || ''}" class="w-full h-full object-cover"></div>
-                        <h2 class="text-5xl font-black text-white mb-2 uppercase tracking-tighter">${elim?.name || 'Unknown'}</h2>
-                        <p class="text-rose-500 font-black tracking-[0.5em] uppercase mb-12">Was Terminated</p>
-                        <div class="glass-card p-10 rounded-[3rem] border-2 border-rose-500/20 max-w-xs mx-auto">
-                            <p class="text-[10px] font-black uppercase opacity-50 mb-3 tracking-widest">Clearance was</p>
-                            <p class="text-4xl font-black text-indigo-400 uppercase tracking-tighter">${elim?.role || '???'}</p>
-                        </div>
-                        ${isHost ? `<button onclick="window.nextRound()" class="mt-14 px-12 py-5 bg-slate-800 rounded-2xl font-black border border-slate-700 transition-all">RESUME MISSION</button>` : ''}
-                    </div>
-                `;
-            } else if (state.room.phase === 'game_over') {
-                content = `
-                    <div class="text-center w-full max-w-md">
-                        <h1 class="text-7xl font-black mb-6 tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-indigo-500">END OP</h1>
-                        <h2 class="text-3xl font-black text-white mb-16 uppercase tracking-[0.4em]">${state.room.winner === 'civilians' ? 'LOYALISTS' : 'TRAITORS'} VICTORIOUS</h2>
-                        <div class="grid grid-cols-2 gap-4 mb-14">
-                            ${players.map(p => `
-                                <div class="glass-card p-4 rounded-3xl flex items-center gap-4 border border-white/5">
-                                    <img src="${p.avatar}" class="w-12 h-12 rounded-xl object-cover">
-                                    <div class="text-left overflow-hidden">
-                                        <p class="text-[10px] font-black opacity-40 uppercase truncate">${p.name}</p>
-                                        <p class="font-black text-xs uppercase ${p.role === 'spy' ? 'text-rose-400' : 'text-indigo-400'}">${p.role}</p>
-                                    </div>
-                                </div>
-                            `).join('')}
-                        </div>
-                        ${isHost ? `<button onclick="window.resetRoom()" class="w-full py-6 bg-indigo-600 rounded-[2rem] font-black text-2xl shadow-2xl active:scale-95">NEW MISSION</button>` : ''}
+                        <h1 class="text-7xl font-black mb-6 text-indigo-500">OP END</h1>
+                        <h2 class="text-3xl font-black text-white mb-16">${winnerText}</h2>
+                        ${isHost ? `<button onclick="window.resetRoom()" class="w-full py-6 bg-indigo-600 rounded-[2rem] font-black text-2xl">NEW OP</button>` : ''}
                     </div>
                 `;
             }
 
             container.innerHTML = `
-                <div class="w-full max-md min-h-screen flex flex-col py-8">
-                    <div class="flex justify-between items-center mb-10 px-2">
-                        <div class="flex items-center gap-3">
-                            <span class="bg-indigo-600/20 px-3 py-1 rounded-full border border-indigo-500/20 text-[10px] font-black text-indigo-400 tracking-widest">${state.room.id}</span>
-                            <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest">${state.room.phase}</span>
-                        </div>
-                        <button onclick="window.leaveRoom()" class="text-[10px] font-black text-slate-600 hover:text-rose-500 uppercase tracking-widest transition-all">Abort Mission</button>
-                    </div>
+                <div class="w-full min-h-screen flex flex-col py-8">
                     <div class="flex-1 flex flex-col justify-center items-center">${content}</div>
-                    <div class="mt-12 flex justify-center gap-4 overflow-x-auto no-scrollbar py-2">
-                        ${players.map(p => `
-                            <div class="flex-shrink-0 flex flex-col items-center gap-2 transition-all ${!p.isAlive ? 'opacity-30 grayscale blur-[1px]' : ''}">
-                                <div class="w-14 h-14 rounded-2xl border-2 overflow-hidden ${p.id === state.user.id ? 'border-indigo-500 shadow-lg shadow-indigo-500/20' : 'border-slate-800'}">
-                                    <img src="${p.avatar}" class="w-full h-full object-cover">
-                                </div>
-                                <span class="text-[9px] font-black text-slate-500 truncate w-14 text-center uppercase tracking-tighter">${p.name}</span>
-                            </div>
-                        `).join('')}
-                    </div>
                 </div>
             `;
         }
@@ -662,26 +564,21 @@
                 [`rooms/${state.room.id}/status`]: 'waiting',
                 [`rooms/${state.room.id}/phase`]: 'discussion',
                 [`rooms/${state.room.id}/winner`]: null,
-                [`rooms/${state.room.id}/eliminatedPlayerId`]: null,
-                [`rooms/${state.room.id}/discussionEndTime`] : null
+                [`rooms/${state.room.id}/eliminatedPlayerId`]: null
             };
             Object.values(state.room.players).forEach(p => {
                 updates[`rooms/${state.room.id}/players/${p.id}/isAlive`] = true;
                 updates[`rooms/${state.room.id}/players/${p.id}/votedFor`] = null;
                 updates[`rooms/${state.room.id}/players/${p.id}/role`] = null;
                 updates[`rooms/${state.room.id}/players/${p.id}/word`] = null;
-                delete p._voteTimerActive;
             });
             await update(ref(db), updates);
         };
         window.leaveRoom = async () => {
             if (state.room && state.user) {
                 const players = Object.values(state.room.players);
-                if (players.length <= 1) {
-                    await remove(ref(db, `rooms/${state.room.id}`));
-                } else {
-                    await remove(ref(db, `rooms/${state.room.id}/players/${state.user.id}`));
-                }
+                if (players.length <= 1) await remove(ref(db, `rooms/${state.room.id}`));
+                else await remove(ref(db, `rooms/${state.room.id}/players/${state.user.id}`));
             }
             state.room = null;
             render();
@@ -692,11 +589,11 @@
 
         setInterval(async () => {
             if (state.room?.status === 'playing' && state.room?.phase === 'discussion' && state.room.players[state.user.id]?.isHost) {
-                if (Date.now() >= state.room.discussionEndTime) {
+                if (Date.now() >= (state.room.discussionEndTime || 0)) {
                     await update(ref(db, `rooms/${state.room.id}`), { phase: 'voting' });
                 }
             }
-        }, 2000);
+        }, 3000);
     </script>
 </body>
 </html>
