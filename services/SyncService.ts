@@ -1,95 +1,146 @@
 
-import { initializeApp } from "firebase/app";
-import { getDatabase, ref, set, onValue, get, remove, off, Database } from "firebase/database";
+import AV from 'leancloud-storage';
+import { Realtime } from 'leancloud-realtime';
 import { Room } from "../types.ts";
 
-// 确认配置对象语法完全正确
-const firebaseConfig = {
-    apiKey: "AIzaSyDVVVUN5OqatqjSrvLwU3tLJXLKbZMW1bA",
-    authDomain: "spy-game-01.firebaseapp.com",
-    databaseURL: "https://spy-game-01-default-rtdb.firebaseio.com", 
-    projectId: "spy-game-01",
-    storageBucket: "spy-game-01.firebasestorage.app",
-    messagingSenderId: "316027229274",
-    appId: "1:316027229274:web:7e7a71258cc8b9c9a87463"
-};
+const APP_ID = 'OZ7A77wckSsShsYVtTjbop9r-MdYXbMMI';
+const APP_KEY = 'SrRi1HPGUsd0sxeJZeesPsnS';
+const SERVER_URL = 'https://oz7a77wc.api.lncldglobal.com';
 
-let db: Database | null = null;
+// Initialize LeanCloud
 try {
-    const app = initializeApp(firebaseConfig);
-    db = getDatabase(app);
+  AV.init({
+    appId: APP_ID,
+    appKey: APP_KEY,
+    serverURL: SERVER_URL
+  });
+  
+  const realtime = new Realtime({
+    appId: APP_ID,
+    appKey: APP_KEY,
+    serverURL: SERVER_URL
+  });
+  AV.setRealtime(realtime);
 } catch (e) {
-    console.error("Critical: Firebase failed to initialize. Check your network or config.", e);
+  console.error("Critical: LeanCloud failed to initialize.", e);
 }
 
 class SyncService {
-  public subscribe(roomId: string, callback: (room: Room) => void) {
-    if (!db) {
-        console.warn("SyncService: Connection failed, subscription skipped.");
-        return;
-    }
-    const roomRef = ref(db, `rooms/${roomId}`);
-    onValue(roomRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const playersData = data.players || {};
-        const players = Array.isArray(playersData) ? playersData : Object.values(playersData);
-        callback({ ...data, players });
-      } else {
+  private liveQuery: any = null;
+
+  /**
+   * Subscribes to room updates using LeanCloud LiveQuery.
+   */
+  public async subscribe(roomId: string, callback: (room: Room) => void) {
+    try {
+      this.unsubscribe(roomId); // Ensure clean start
+
+      const query = new AV.Query('GameRoom');
+      query.equalTo('roomCode', roomId);
+      
+      this.liveQuery = await query.subscribe();
+      
+      this.liveQuery.on('update', (obj: any) => {
+        const payload = obj.get('payload');
+        if (payload) {
+          callback(payload);
+        }
+      });
+
+      this.liveQuery.on('delete', () => {
         // @ts-ignore
         callback(null);
-      }
-    });
-  }
+      });
 
-  public unsubscribe(roomId: string) {
-    if (!db) return;
-    const roomRef = ref(db, `rooms/${roomId}`);
-    off(roomRef);
-  }
-
-  public async broadcast(room: Room) {
-    if (!db) {
-        console.error("SyncService: Database not available for broadcast.");
-        return;
-    }
-    const roomRef = ref(db, `rooms/${room.id}`);
-    await set(roomRef, room);
-  }
-
-  public async getRoom(roomId: string): Promise<Room | null> {
-    if (!db) return null;
-    try {
-        const snapshot = await get(ref(db, `rooms/${roomId}`));
-        if (snapshot.exists()) {
-          const data = snapshot.val();
-          const playersData = data.players || {};
-          const players = Array.isArray(playersData) ? playersData : Object.values(playersData);
-          return { ...data, players };
-        }
+      // Initial fetch to populate state immediately
+      const initial = await this.getRoom(roomId);
+      if (initial) callback(initial);
     } catch (err) {
-        console.error("SyncService: Error fetching room", err);
+      console.error("SyncService: Subscription error", err);
+    }
+  }
+
+  /**
+   * Unsubscribes from the current LiveQuery.
+   */
+  public unsubscribe(roomId: string) {
+    if (this.liveQuery) {
+      this.liveQuery.unsubscribe();
+      this.liveQuery = null;
+    }
+  }
+
+  /**
+   * Broadcasts room state updates to LeanCloud.
+   * If the room doesn't exist, it creates a new record.
+   */
+  public async broadcast(room: Room) {
+    try {
+      const query = new AV.Query('GameRoom');
+      query.equalTo('roomCode', room.id);
+      let obj = await query.first();
+
+      if (!obj) {
+        const GameRoom = AV.Object.extend('GameRoom');
+        obj = new GameRoom();
+        obj.set('roomCode', room.id);
+      }
+
+      obj.set('payload', room);
+      await obj.save();
+    } catch (err) {
+      console.error("SyncService: Broadcast error", err);
+    }
+  }
+
+  /**
+   * Fetches the current room state.
+   */
+  public async getRoom(roomId: string): Promise<Room | null> {
+    try {
+      const query = new AV.Query('GameRoom');
+      query.equalTo('roomCode', roomId);
+      const obj = await query.first();
+      
+      if (obj) {
+        return obj.get('payload') as Room;
+      }
+    } catch (err) {
+      console.error("SyncService: GetRoom error", err);
     }
     return null;
   }
 
+  /**
+   * Handles player leaving a room.
+   * Deletes the room if no players remain.
+   */
   public async leaveRoom(roomId: string, userId: string) {
-    if (!db) return;
     try {
-        const snapshot = await get(ref(db, `rooms/${roomId}/players`));
-        if (snapshot.exists()) {
-          const playersObj = snapshot.val();
-          const players = Array.isArray(playersObj) ? playersObj : Object.values(playersObj);
-          const filtered = players.filter((p: any) => p.id !== userId);
-          
-          if (filtered.length === 0) {
-            await remove(ref(db, `rooms/${roomId}`));
-          } else {
-            await set(ref(db, `rooms/${roomId}/players`), filtered);
+      const query = new AV.Query('GameRoom');
+      query.equalTo('roomCode', roomId);
+      const obj = await query.first();
+
+      if (obj) {
+        const roomData = obj.get('payload') as Room;
+        const updatedPlayers = roomData.players.filter(p => p.id !== userId);
+
+        if (updatedPlayers.length === 0) {
+          await obj.destroy();
+        } else {
+          // If the host left, assign a new host
+          const hasHost = updatedPlayers.some(p => p.isHost);
+          if (!hasHost && updatedPlayers.length > 0) {
+            updatedPlayers[0].isHost = true;
           }
+          
+          roomData.players = updatedPlayers;
+          obj.set('payload', roomData);
+          await obj.save();
         }
+      }
     } catch (err) {
-        console.error("SyncService: Error during leaveRoom", err);
+      console.error("SyncService: LeaveRoom error", err);
     }
   }
 }
