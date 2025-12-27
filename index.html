@@ -40,14 +40,15 @@
             50% { border-color: rgba(99, 102, 241, 0.8); }
         }
         .animate-pulse-indigo { animation: pulse-indigo 2s infinite; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
     </style>
 <script type="importmap">
 {
   "imports": {
-    "react": "https://esm.sh/react@^19.2.3",
+    "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
     "react/": "https://esm.sh/react@^19.2.3/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.34.0"
+    "react": "https://esm.sh/react@^19.2.3"
   }
 }
 </script>
@@ -92,6 +93,8 @@
             "https://api.dicebear.com/7.x/bottts-neutral/svg?seed=Buster",
             "https://api.dicebear.com/7.x/bottts-neutral/svg?seed=Milo",
         ];
+
+        const BOT_NAMES = ["Agent Alpha", "Cipher Beta", "Ghost Gamma", "Shadow Delta", "Echo Epsilon", "Rogue Zeta"];
 
         // --- Core Functions ---
         async function generateAIAvatar(name) {
@@ -191,6 +194,24 @@
             onValue(ref(db, `rooms/${roomId}`), (snapshot) => {
                 const data = snapshot.val();
                 if (data) {
+                    // Check if current user was kicked
+                    if (state.user && (!data.players || !data.players[state.user.id])) {
+                        state.room = null;
+                        alert("Access Denied: You have been removed from this operation.");
+                        render();
+                        return;
+                    }
+                    
+                    // Host Migration Logic
+                    const players = Object.values(data.players || {});
+                    const currentHost = players.find(p => p.isHost && !p.isBot);
+                    if (!currentHost && players.length > 0) {
+                        const firstHuman = players.find(p => !p.isBot);
+                        if (firstHuman && firstHuman.id === state.user.id) {
+                            update(ref(db, `rooms/${roomId}/players/${state.user.id}`), { isHost: true });
+                        }
+                    }
+
                     state.room = data;
                     state.loading = false;
                     render();
@@ -201,9 +222,31 @@
             });
         }
 
+        async function addBot() {
+            if (!state.room || Object.keys(state.room.players).length >= 7) return;
+            const botId = 'bot_' + Math.random().toString(36).substr(2, 9);
+            const botName = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)];
+            const botAvatar = `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${botId}`;
+            
+            await update(ref(db, `rooms/${state.room.id}/players/${botId}`), {
+                id: botId,
+                name: botName,
+                avatar: botAvatar,
+                isHost: false,
+                isAlive: true,
+                isBot: true,
+                votedFor: null
+            });
+        }
+
+        async function kickPlayer(playerId) {
+            if (playerId === state.user.id) return;
+            await remove(ref(db, `rooms/${state.room.id}/players/${playerId}`));
+        }
+
         async function startGame() {
             const players = Object.values(state.room.players);
-            if (players.length < 4) return alert("Need at least 4 players!");
+            if (players.length < 4) return alert("Operation requires at least 4 agents!");
 
             state.loading = true;
             render();
@@ -212,7 +255,7 @@
                 const ai = new GoogleGenAI({ apiKey: window.process.env.API_KEY });
                 const response = await ai.models.generateContent({
                     model: "gemini-3-flash-preview",
-                    contents: "Generate 1 pair of English words for 'Who is the Spy'. Similar concepts.",
+                    contents: "Generate 1 pair of English words for 'Who is the Spy'. Concepts should be close but distinct.",
                     config: {
                         responseMimeType: "application/json",
                         responseSchema: {
@@ -239,7 +282,7 @@
                     let role = 'civilian';
                     let word = pair.civilian;
                     if (p.id === spyId) { role = 'spy'; word = pair.spy; }
-                    else if (p.id === blankId) { role = 'blank'; word = "YOU ARE BLANK!"; }
+                    else if (p.id === blankId) { role = 'blank'; word = "NOTHING FOUND (BLANK)"; }
                     
                     updates[`rooms/${state.room.id}/players/${p.id}/role`] = role;
                     updates[`rooms/${state.room.id}/players/${p.id}/word`] = word;
@@ -250,12 +293,13 @@
                 updates[`rooms/${state.room.id}/status`] = 'playing';
                 updates[`rooms/${state.room.id}/phase`] = 'discussion';
                 updates[`rooms/${state.room.id}/winner`] = null;
+                updates[`rooms/${state.room.id}/eliminatedPlayerId`] = null;
                 updates[`rooms/${state.room.id}/discussionEndTime`] = Date.now() + 180000;
 
                 await update(ref(db), updates);
             } catch (e) {
                 console.error(e);
-                alert("Game initialization failed.");
+                alert("Critical Error: Intelligence gathering failed.");
             } finally {
                 state.loading = false;
                 render();
@@ -320,11 +364,11 @@
                     <h1 class="text-6xl font-black mb-12 tracking-tighter text-transparent bg-clip-text bg-gradient-to-br from-indigo-400 to-purple-500 uppercase">Undercover</h1>
                     <div class="glass-card w-full p-8 rounded-[2.5rem] shadow-2xl space-y-8 border-indigo-500/20">
                         <div>
-                            <label class="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 ml-1">Alias Name</label>
-                            <input id="nameInput" type="text" placeholder="Enter spy nickname..." class="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-bold">
+                            <label class="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 ml-1">Agent Handle</label>
+                            <input id="nameInput" type="text" placeholder="Identity name..." class="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-bold">
                         </div>
                         <div>
-                            <label class="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 ml-1">Identity Icon</label>
+                            <label class="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 ml-1">Choose Icon</label>
                             <div class="grid grid-cols-4 gap-2 mb-4">
                                 ${PREDEFINED_AVATARS.map(url => `
                                     <div onclick="window.selectAvatar('${url}')" class="relative aspect-square rounded-xl overflow-hidden border-2 cursor-pointer transition-all ${state.selectedAvatar === url ? 'border-indigo-500 scale-105 shadow-lg shadow-indigo-500/20' : 'border-slate-800 opacity-60'}">
@@ -336,7 +380,7 @@
                                 </div>
                             </div>
                         </div>
-                        <button onclick="window.doLogin()" class="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black text-lg transition-all active:scale-95 shadow-xl shadow-indigo-900/40">ENTER FIELD</button>
+                        <button onclick="window.doLogin()" class="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black text-lg transition-all active:scale-95 shadow-xl shadow-indigo-900/40">COMMENCE MISSION</button>
                     </div>
                 </div>
             `;
@@ -353,10 +397,10 @@
                         <p class="text-3xl font-black text-white">${state.user.name}</p>
                     </div>
                     <div class="w-full space-y-4">
-                        <button onclick="window.createRoom()" class="w-full py-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-[2rem] font-black text-xl transition-all shadow-xl active:scale-95">CREATE MISSION</button>
+                        <button onclick="window.createRoom()" class="w-full py-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-[2rem] font-black text-xl transition-all shadow-xl active:scale-95">ESTABLISH SECTOR</button>
                         <div class="relative py-4 text-center">
                             <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-800"></div></div>
-                            <span class="relative bg-slate-950 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Infiltrate</span>
+                            <span class="relative bg-slate-950 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">or Join</span>
                         </div>
                         <div class="flex gap-2">
                             <input id="roomInput" type="number" placeholder="4-digit ID" class="flex-1 bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-center text-xl text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500">
@@ -368,42 +412,65 @@
         }
 
         function renderWaitingRoom(container) {
-            const players = Object.values(state.room.players);
-            const isHost = state.room.players[state.user.id].isHost;
+            const playersList = Object.values(state.room.players || {});
+            const me = state.room.players[state.user.id];
+            const isHost = me.isHost;
+
+            // Define 7 seats
+            const seats = new Array(7).fill(null);
+            playersList.forEach((p, idx) => { if (idx < 7) seats[idx] = p; });
+
             container.innerHTML = `
-                <div class="w-full max-w-md animate-in fade-in zoom-in duration-300">
-                    <div class="flex justify-between items-end mb-8">
-                        <div>
-                            <h2 class="text-xs font-black text-indigo-400 uppercase tracking-[0.4em] mb-2">Sector Assigned</h2>
+                <div class="w-full max-w-2xl animate-in fade-in zoom-in duration-300">
+                    <div class="flex flex-col md:flex-row justify-between items-center mb-10 gap-6">
+                        <div class="text-center md:text-left">
+                            <h2 class="text-xs font-black text-indigo-400 uppercase tracking-[0.4em] mb-2">Sector ID</h2>
                             <p class="text-6xl font-mono font-black text-white tracking-tighter">${state.room.id}</p>
                         </div>
-                        <div class="text-right">
-                             <p class="text-[10px] font-black text-slate-500 uppercase mb-2">Agents Locked</p>
-                             <div class="text-2xl font-black text-white">${players.length} / 7</div>
+                        <div class="flex flex-col items-center md:items-end">
+                             <p class="text-[10px] font-black text-slate-500 uppercase mb-2">Personnel</p>
+                             <div class="text-2xl font-black text-white bg-slate-900/50 px-6 py-2 rounded-full border border-slate-800">${playersList.length} / 7 Locked</div>
                         </div>
                     </div>
-                    <div class="glass-card rounded-[2.5rem] p-6 shadow-2xl mb-12">
-                        <div class="space-y-3">
-                            ${players.map(p => `
-                                <div class="flex items-center justify-between p-4 rounded-2xl ${p.id === state.user.id ? 'bg-indigo-600/10 border border-indigo-500/30' : 'bg-slate-900/40 border border-slate-800'}">
-                                    <div class="flex items-center gap-4">
-                                        <div class="w-12 h-12 rounded-xl border-2 overflow-hidden ${p.isHost ? 'border-amber-500 shadow-lg shadow-amber-500/20' : 'border-slate-800'}">
-                                            <img src="${p.avatar}" class="w-full h-full object-cover">
-                                        </div>
-                                        <span class="font-black uppercase text-sm tracking-tight ${p.id === state.user.id ? 'text-indigo-200' : 'text-slate-300'}">
-                                            ${p.name} ${p.id === state.user.id ? '(YOU)' : ''}
-                                        </span>
+
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-12">
+                        ${seats.map((p, idx) => `
+                            <div class="relative group h-40 glass-card rounded-[2rem] flex flex-col items-center justify-center border-2 transition-all ${p ? (p.id === state.user.id ? 'border-indigo-500 bg-indigo-600/10' : 'border-slate-800 bg-slate-900/40') : 'border-dashed border-slate-800 opacity-40'}">
+                                ${p ? `
+                                    <div class="w-16 h-16 rounded-2xl overflow-hidden mb-3 border-2 ${p.isHost ? 'border-amber-500 shadow-lg shadow-amber-500/20' : 'border-slate-700'}">
+                                        <img src="${p.avatar}" class="w-full h-full object-cover">
                                     </div>
-                                    ${p.isHost ? `<span class="text-[8px] font-black bg-amber-500/10 text-amber-500 border border-amber-500/20 px-2 py-1 rounded-full uppercase">Director</span>` : ''}
-                                </div>
-                            `).join('')}
-                        </div>
+                                    <span class="text-[10px] font-black uppercase text-center px-2 truncate w-full">${p.name} ${p.isBot ? '(BOT)' : ''}</span>
+                                    ${isHost && p.id !== state.user.id ? `
+                                        <button onclick="window.kickPlayer('${p.id}')" class="absolute -top-2 -right-2 bg-rose-600 text-white text-[8px] font-black px-2 py-1 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">KICK</button>
+                                    ` : ''}
+                                ` : `
+                                    <div class="w-10 h-10 rounded-full border-2 border-slate-800 border-dashed flex items-center justify-center text-slate-800">
+                                        <span class="text-xs">#${idx+1}</span>
+                                    </div>
+                                    <span class="text-[8px] font-black uppercase mt-2 text-slate-700">Empty Slot</span>
+                                `}
+                            </div>
+                        `).join('')}
                     </div>
-                    ${isHost ? `
-                        <button onclick="window.startGame()" ${players.length < 4 ? 'disabled' : ''} class="w-full py-6 rounded-[2rem] font-black text-2xl transition-all shadow-2xl active:scale-95 ${players.length >= 4 ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white' : 'bg-slate-800 text-slate-600 opacity-50'}">
-                            INITIALIZE OPERATION
-                        </button>
-                    ` : `<div class="text-center p-6 bg-slate-900/50 rounded-3xl animate-pulse text-slate-500 font-black uppercase text-xs tracking-widest">Waiting for Mission Director...</div>`}
+
+                    <div class="flex flex-col sm:flex-row gap-4">
+                        ${isHost ? `
+                            <button onclick="window.addBot()" ${playersList.length >= 7 ? 'disabled' : ''} class="flex-1 py-5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-[2rem] font-black text-lg transition-all border border-slate-700 active:scale-95 disabled:opacity-30">
+                                INSERT BOT
+                            </button>
+                            <button onclick="window.startGame()" ${playersList.length < 4 ? 'disabled' : ''} class="flex-[2] py-5 rounded-[2rem] font-black text-2xl transition-all shadow-2xl active:scale-95 ${playersList.length >= 4 ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white' : 'bg-slate-800 text-slate-600 opacity-50'}">
+                                START BRIEFING
+                            </button>
+                        ` : `
+                            <div class="w-full py-5 bg-slate-900/50 border border-slate-800 rounded-[2rem] flex flex-col items-center justify-center animate-pulse">
+                                <span class="text-slate-500 font-black text-sm tracking-widest uppercase">Waiting for Mission Director...</span>
+                            </div>
+                        `}
+                    </div>
+                    <div class="mt-8 text-center">
+                        <button onclick="window.leaveRoom()" class="text-[10px] font-black text-slate-600 hover:text-rose-500 uppercase tracking-widest transition-all">Abort Assignment</button>
+                    </div>
                 </div>
             `;
         }
@@ -413,24 +480,41 @@
             const players = Object.values(state.room.players);
             const isHost = me.isHost;
 
+            // --- Senior Engineering Logic: Humanized Bot Voting ---
+            // Only the host manages bot actions to avoid sync conflicts
+            if (isHost && state.room.phase === 'voting') {
+                const pendingBots = players.filter(p => p.isBot && p.isAlive && !p.votedFor);
+                pendingBots.forEach(bot => {
+                    if (!bot._voteTimerActive) {
+                        bot._voteTimerActive = true;
+                        const delay = 2000 + Math.random() * 5000; // Human-like 2-7s delay
+                        setTimeout(() => {
+                            const aliveTargets = players.filter(p => p.isAlive);
+                            const target = aliveTargets[Math.floor(Math.random() * aliveTargets.length)];
+                            update(ref(db, `rooms/${state.room.id}/players/${bot.id}`), { votedFor: target.id });
+                        }, delay);
+                    }
+                });
+            }
+
             let content = '';
             if (state.room.phase === 'discussion') {
                 const timeLeft = Math.max(0, Math.floor((state.room.discussionEndTime - Date.now()) / 1000));
                 content = `
                     <div class="flex flex-col items-center">
                         <div class="mb-10 text-center">
-                            <p class="text-[10px] font-black text-slate-500 uppercase tracking-[0.5em] mb-2">Comms Window</p>
+                            <p class="text-[10px] font-black text-slate-500 uppercase tracking-[0.5em] mb-2">Comms Secure</p>
                             <div class="text-6xl font-mono font-black ${timeLeft < 30 ? 'text-rose-500 animate-pulse' : 'text-white'}">${String(Math.floor(timeLeft/60)).padStart(2,'0')}:${String(timeLeft%60).padStart(2,'0')}</div>
                         </div>
                         <div onclick="window.toggleReveal()" class="relative w-64 h-96 perspective-1000 cursor-pointer group">
                             <div class="card-inner w-full h-full preserve-3d ${state.isRevealed ? 'card-flipped' : ''}">
                                 <div class="absolute inset-0 backface-hidden glass-card rounded-[3rem] border-4 border-indigo-500/20 shadow-2xl flex flex-col items-center justify-center p-8">
                                     <div class="w-20 h-20 rounded-3xl overflow-hidden mb-6 border-4 border-indigo-500 shadow-xl"><img src="${me.avatar}" class="w-full h-full object-cover"></div>
-                                    <p class="text-xl font-black text-indigo-400 tracking-widest">REVEAL WORD</p>
-                                    <p class="text-[10px] font-bold text-slate-600 mt-2 uppercase">Tap to decrypt</p>
+                                    <p class="text-xl font-black text-indigo-400 tracking-widest">DECRYPT INTEL</p>
+                                    <p class="text-[10px] font-bold text-slate-600 mt-2 uppercase">Tap to reveal</p>
                                 </div>
                                 <div class="absolute inset-0 backface-hidden rotate-y-180 bg-gradient-to-br from-indigo-700 to-purple-800 rounded-[3rem] shadow-2xl flex flex-col items-center justify-center p-8 text-center">
-                                    <p class="text-[10px] font-black uppercase text-indigo-200/50 tracking-widest mb-4">You are</p>
+                                    <p class="text-[10px] font-black uppercase text-indigo-200/50 tracking-widest mb-4">Clearance</p>
                                     <h3 class="text-3xl font-black text-white mb-6 uppercase tracking-tighter">${me.role}</h3>
                                     <div class="w-full h-px bg-white/10 mb-6"></div>
                                     <p class="text-5xl font-black text-white tracking-tight">${me.word}</p>
@@ -452,32 +536,32 @@
                                         <img src="${p.avatar}" class="w-14 h-14 rounded-2xl border-2 border-slate-700 object-cover">
                                         <span class="font-black text-xl text-white uppercase tracking-tight">${p.name}</span>
                                     </div>
-                                    ${me.votedFor === p.id ? `<svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" /></svg>` : ''}
+                                    ${p.votedFor ? `<span class="bg-indigo-500/20 text-indigo-300 text-[8px] font-bold px-2 py-1 rounded-full uppercase">LOCKED</span>` : `<span class="text-slate-600 text-[8px] font-bold uppercase animate-pulse">THINKING</span>`}
                                 </button>
                             `).join('')}
                         </div>
-                        ${isHost ? `<button onclick="window.resolveVoting()" class="w-full mt-12 py-6 bg-rose-600 rounded-[2rem] font-black text-xl shadow-2xl active:scale-95 transition-all">TERMINATE AGENT</button>` : ''}
+                        ${isHost ? `<button onclick="window.resolveVoting()" class="w-full mt-12 py-6 bg-rose-600 rounded-[2rem] font-black text-xl shadow-2xl active:scale-95 transition-all">RESOLVE</button>` : ''}
                     </div>
                 `;
             } else if (state.room.phase === 'elimination') {
                 const elim = state.room.players[state.room.eliminatedPlayerId];
                 content = `
                     <div class="text-center">
-                        <div class="w-32 h-32 mx-auto rounded-3xl border-4 border-rose-600 overflow-hidden mb-6 shadow-2xl grayscale"><img src="${elim.avatar}" class="w-full h-full object-cover"></div>
-                        <h2 class="text-5xl font-black text-white mb-2 uppercase">${elim.name}</h2>
+                        <div class="w-32 h-32 mx-auto rounded-3xl border-4 border-rose-600 overflow-hidden mb-6 shadow-2xl grayscale"><img src="${elim?.avatar || ''}" class="w-full h-full object-cover"></div>
+                        <h2 class="text-5xl font-black text-white mb-2 uppercase">${elim?.name || 'Unknown'}</h2>
                         <p class="text-rose-500 font-black tracking-[0.5em] uppercase mb-12">Was Terminated</p>
                         <div class="glass-card p-10 rounded-[3rem] border-2 border-rose-500/20 max-w-xs mx-auto">
                             <p class="text-[10px] font-black uppercase opacity-50 mb-3 tracking-widest">Clearance was</p>
-                            <p class="text-4xl font-black text-indigo-400 uppercase">${elim.role}</p>
+                            <p class="text-4xl font-black text-indigo-400 uppercase">${elim?.role || '???'}</p>
                         </div>
-                        ${isHost ? `<button onclick="window.nextRound()" class="mt-14 px-12 py-5 bg-slate-800 rounded-2xl font-black border border-slate-700 transition-all">RESUME MISSION</button>` : ''}
+                        ${isHost ? `<button onclick="window.nextRound()" class="mt-14 px-12 py-5 bg-slate-800 rounded-2xl font-black border border-slate-700 transition-all">RESUME</button>` : ''}
                     </div>
                 `;
             } else if (state.room.phase === 'game_over') {
                 content = `
                     <div class="text-center w-full max-w-md">
-                        <h1 class="text-7xl font-black mb-6 tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-rose-500 to-indigo-500">MISSION END</h1>
-                        <h2 class="text-3xl font-black text-white mb-16 uppercase tracking-[0.4em]">${state.room.winner === 'civilians' ? 'LOYALISTS' : 'TRAITORS'} WON</h2>
+                        <h1 class="text-7xl font-black mb-6 tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-rose-500 to-indigo-500">END OP</h1>
+                        <h2 class="text-3xl font-black text-white mb-16 uppercase tracking-[0.4em]">${state.room.winner === 'civilians' ? 'LOYALISTS' : 'TRAITORS'} VICTORIOUS</h2>
                         <div class="grid grid-cols-2 gap-4 mb-14">
                             ${players.map(p => `
                                 <div class="glass-card p-4 rounded-3xl flex items-center gap-4 border border-white/5">
@@ -489,13 +573,13 @@
                                 </div>
                             `).join('')}
                         </div>
-                        ${isHost ? `<button onclick="window.resetRoom()" class="w-full py-6 bg-indigo-600 rounded-[2rem] font-black text-2xl shadow-2xl active:scale-95">NEW BRIEFING</button>` : ''}
+                        ${isHost ? `<button onclick="window.resetRoom()" class="w-full py-6 bg-indigo-600 rounded-[2rem] font-black text-2xl shadow-2xl active:scale-95">NEW MISSION</button>` : ''}
                     </div>
                 `;
             }
 
             container.innerHTML = `
-                <div class="w-full max-w-md min-h-screen flex flex-col py-8">
+                <div class="w-full max-md min-h-screen flex flex-col py-8">
                     <div class="flex justify-between items-center mb-10 px-2">
                         <div class="flex items-center gap-3">
                             <span class="bg-indigo-600/20 px-3 py-1 rounded-full border border-indigo-500/20 text-[10px] font-black text-indigo-400 tracking-widest">${state.room.id}</span>
@@ -518,6 +602,8 @@
         window.doJoin = () => joinRoom(document.getElementById('roomInput')?.value);
         window.createRoom = createRoom;
         window.startGame = startGame;
+        window.addBot = addBot;
+        window.kickPlayer = kickPlayer;
         window.toggleReveal = () => { state.isRevealed = !state.isRevealed; render(); };
         window.startVoting = () => update(ref(db, `rooms/${state.room.id}`), { phase: 'voting' });
         window.doVote = castVote;
@@ -529,17 +615,24 @@
                 [`rooms/${state.room.id}/phase`]: 'discussion',
                 [`rooms/${state.room.id}/winner`]: null,
                 [`rooms/${state.room.id}/eliminatedPlayerId`]: null,
-                [`rooms/${state.room.id}/discussionEndTime`]: null
+                [`rooms/${state.room.id}/discussionEndTime`] : null
             };
             Object.values(state.room.players).forEach(p => {
                 updates[`rooms/${state.room.id}/players/${p.id}/isAlive`] = true;
                 updates[`rooms/${state.room.id}/players/${p.id}/votedFor`] = null;
+                updates[`rooms/${state.room.id}/players/${p.id}/role`] = null;
+                updates[`rooms/${state.room.id}/players/${p.id}/word`] = null;
             });
             await update(ref(db), updates);
         };
         window.leaveRoom = async () => {
             if (state.room && state.user) {
-                await remove(ref(db, `rooms/${state.room.id}/players/${state.user.id}`));
+                const players = Object.values(state.room.players);
+                if (players.length <= 1) {
+                    await remove(ref(db, `rooms/${state.room.id}`));
+                } else {
+                    await remove(ref(db, `rooms/${state.room.id}/players/${state.user.id}`));
+                }
             }
             state.room = null;
             render();
