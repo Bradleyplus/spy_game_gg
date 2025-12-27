@@ -147,7 +147,7 @@ const App: React.FC = () => {
 
   const startGame = async () => {
     if (!room || !user) return;
-    if (room.players.length < 4) return;
+    if (room.players.length < 3) return;
 
     setLoading(true);
     try {
@@ -156,6 +156,7 @@ const App: React.FC = () => {
       
       const shuffled = [...room.players].sort(() => Math.random() - 0.5);
       const spyId = shuffled[0].id;
+      // Blank logic only triggers for 7 players
       const blankId = shuffled.length === 7 ? shuffled[1].id : null;
 
       const newPlayers = room.players.map(p => {

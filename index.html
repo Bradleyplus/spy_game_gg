@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -46,9 +47,9 @@
 {
   "imports": {
     "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
     "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3"
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/"
   }
 }
 </script>
@@ -94,7 +95,7 @@
             "https://api.dicebear.com/7.x/bottts-neutral/svg?seed=Milo",
         ];
 
-        const BOT_NAMES = ["Agent Alpha", "Cipher Beta", "Ghost Gamma", "Shadow Delta", "Echo Epsilon", "Rogue Zeta"];
+        const BOT_NAMES = ["Agent Alpha", "Cipher Beta", "Ghost Gamma", "Shadow Delta", "Echo Epsilon", "Rogue Zeta", "Spectre Eta"];
 
         // --- Core Functions ---
         async function generateAIAvatar(name) {
@@ -151,7 +152,8 @@
                         avatar: state.user.avatar,
                         isHost: true,
                         isAlive: true,
-                        votedFor: null
+                        votedFor: null,
+                        seatIndex: 0
                     }
                 },
                 winner: null,
@@ -173,19 +175,32 @@
                 return;
             }
             const data = snapshot.val();
-            if (Object.keys(data.players || {}).length >= 7) {
+            const playersList = Object.values(data.players || {});
+            if (playersList.length >= 7) {
                 alert("Room full!");
                 state.loading = false;
                 render();
                 return;
             }
+
+            // Find first empty seat index
+            const takenSeats = playersList.map(p => p.seatIndex);
+            let seatIndex = 0;
+            for (let i = 0; i < 7; i++) {
+                if (!takenSeats.includes(i)) {
+                    seatIndex = i;
+                    break;
+                }
+            }
+
             await update(ref(db, `rooms/${roomId}/players/${state.user.id}`), {
                 id: state.user.id,
                 name: state.user.name,
                 avatar: state.user.avatar,
                 isHost: false,
                 isAlive: true,
-                votedFor: null
+                votedFor: null,
+                seatIndex: seatIndex
             });
             listenToRoom(roomId);
         }
@@ -197,7 +212,7 @@
                     // Check if current user was kicked
                     if (state.user && (!data.players || !data.players[state.user.id])) {
                         state.room = null;
-                        alert("Access Denied: You have been removed from this operation.");
+                        alert("Access Denied: You have been removed from this operation by the Director.");
                         render();
                         return;
                     }
@@ -228,6 +243,16 @@
             const botName = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)];
             const botAvatar = `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${botId}`;
             
+            const playersList = Object.values(state.room.players || {});
+            const takenSeats = playersList.map(p => p.seatIndex);
+            let seatIndex = 0;
+            for (let i = 0; i < 7; i++) {
+                if (!takenSeats.includes(i)) {
+                    seatIndex = i;
+                    break;
+                }
+            }
+
             await update(ref(db, `rooms/${state.room.id}/players/${botId}`), {
                 id: botId,
                 name: botName,
@@ -235,7 +260,8 @@
                 isHost: false,
                 isAlive: true,
                 isBot: true,
-                votedFor: null
+                votedFor: null,
+                seatIndex: seatIndex
             });
         }
 
@@ -246,7 +272,7 @@
 
         async function startGame() {
             const players = Object.values(state.room.players);
-            if (players.length < 4) return alert("Operation requires at least 4 agents!");
+            if (players.length < 3) return alert("Operation requires at least 3 agents (humans or bots)!");
 
             state.loading = true;
             render();
@@ -255,7 +281,7 @@
                 const ai = new GoogleGenAI({ apiKey: window.process.env.API_KEY });
                 const response = await ai.models.generateContent({
                     model: "gemini-3-flash-preview",
-                    contents: "Generate 1 pair of English words for 'Who is the Spy'. Concepts should be close but distinct.",
+                    contents: "Generate 1 pair of English words for 'Who is the Spy'. Concepts should be very close (e.g., Apple vs Pear).",
                     config: {
                         responseMimeType: "application/json",
                         responseSchema: {
@@ -275,7 +301,7 @@
                 const pair = JSON.parse(response.text)[0];
                 const shuffled = [...players].sort(() => Math.random() - 0.5);
                 const spyId = shuffled[0].id;
-                const blankId = shuffled.length === 7 ? shuffled[1].id : null;
+                const blankId = (shuffled.length === 7) ? shuffled[1].id : null;
 
                 const updates = {};
                 players.forEach(p => {
@@ -368,7 +394,7 @@
                             <input id="nameInput" type="text" placeholder="Identity name..." class="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-bold">
                         </div>
                         <div>
-                            <label class="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 ml-1">Choose Icon</label>
+                            <label class="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 ml-1">Identify Icon</label>
                             <div class="grid grid-cols-4 gap-2 mb-4">
                                 ${PREDEFINED_AVATARS.map(url => `
                                     <div onclick="window.selectAvatar('${url}')" class="relative aspect-square rounded-xl overflow-hidden border-2 cursor-pointer transition-all ${state.selectedAvatar === url ? 'border-indigo-500 scale-105 shadow-lg shadow-indigo-500/20' : 'border-slate-800 opacity-60'}">
@@ -391,7 +417,7 @@
                 <div class="w-full max-w-sm flex flex-col items-center">
                     <div class="text-center mb-12 flex flex-col items-center">
                         <div class="w-24 h-24 rounded-[2rem] border-2 border-indigo-500/30 overflow-hidden mb-4 shadow-2xl">
-                            <img src="${state.user.avatar}" class="w-full h-full object-cover">
+                            <img src="${state.user.avatar}" class="w-full h-full object-cover" alt="me" />
                         </div>
                         <h2 class="text-sm font-black text-indigo-400 uppercase tracking-[0.4em] mb-1">Status: Active</h2>
                         <p class="text-3xl font-black text-white">${state.user.name}</p>
@@ -400,7 +426,7 @@
                         <button onclick="window.createRoom()" class="w-full py-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-[2rem] font-black text-xl transition-all shadow-xl active:scale-95">ESTABLISH SECTOR</button>
                         <div class="relative py-4 text-center">
                             <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-800"></div></div>
-                            <span class="relative bg-slate-950 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">or Join</span>
+                            <span class="relative bg-slate-950 px-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Infiltrate Room</span>
                         </div>
                         <div class="flex gap-2">
                             <input id="roomInput" type="number" placeholder="4-digit ID" class="flex-1 bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 text-center text-xl text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500">
@@ -416,9 +442,9 @@
             const me = state.room.players[state.user.id];
             const isHost = me.isHost;
 
-            // Define 7 seats
+            // Define 7 seats grid
             const seats = new Array(7).fill(null);
-            playersList.forEach((p, idx) => { if (idx < 7) seats[idx] = p; });
+            playersList.forEach((p) => { seats[p.seatIndex] = p; });
 
             container.innerHTML = `
                 <div class="w-full max-w-2xl animate-in fade-in zoom-in duration-300">
@@ -435,14 +461,15 @@
 
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-12">
                         ${seats.map((p, idx) => `
-                            <div class="relative group h-40 glass-card rounded-[2rem] flex flex-col items-center justify-center border-2 transition-all ${p ? (p.id === state.user.id ? 'border-indigo-500 bg-indigo-600/10' : 'border-slate-800 bg-slate-900/40') : 'border-dashed border-slate-800 opacity-40'}">
+                            <div class="relative group h-40 glass-card rounded-[2rem] flex flex-col items-center justify-center border-2 transition-all ${p ? (p.id === state.user.id ? 'border-indigo-500 bg-indigo-600/10 animate-pulse-indigo' : 'border-slate-800 bg-slate-900/40') : 'border-dashed border-slate-800 opacity-40'}">
                                 ${p ? `
                                     <div class="w-16 h-16 rounded-2xl overflow-hidden mb-3 border-2 ${p.isHost ? 'border-amber-500 shadow-lg shadow-amber-500/20' : 'border-slate-700'}">
                                         <img src="${p.avatar}" class="w-full h-full object-cover">
                                     </div>
                                     <span class="text-[10px] font-black uppercase text-center px-2 truncate w-full">${p.name} ${p.isBot ? '(BOT)' : ''}</span>
+                                    ${p.isHost ? `<span class="absolute top-3 left-3 text-[7px] font-black bg-amber-500 text-slate-950 px-1.5 py-0.5 rounded-full uppercase">Director</span>` : ''}
                                     ${isHost && p.id !== state.user.id ? `
-                                        <button onclick="window.kickPlayer('${p.id}')" class="absolute -top-2 -right-2 bg-rose-600 text-white text-[8px] font-black px-2 py-1 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">KICK</button>
+                                        <button onclick="window.kickPlayer('${p.id}')" class="absolute -top-2 -right-2 bg-rose-600 hover:bg-rose-500 text-white text-[8px] font-black px-3 py-1.5 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">KICK AGENT</button>
                                     ` : ''}
                                 ` : `
                                     <div class="w-10 h-10 rounded-full border-2 border-slate-800 border-dashed flex items-center justify-center text-slate-800">
@@ -456,15 +483,16 @@
 
                     <div class="flex flex-col sm:flex-row gap-4">
                         ${isHost ? `
-                            <button onclick="window.addBot()" ${playersList.length >= 7 ? 'disabled' : ''} class="flex-1 py-5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-[2rem] font-black text-lg transition-all border border-slate-700 active:scale-95 disabled:opacity-30">
-                                INSERT BOT
+                            <button onclick="window.addBot()" ${playersList.length >= 7 ? 'disabled' : ''} class="flex-1 py-5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-[2rem] font-black text-lg transition-all border border-slate-700 active:scale-95 disabled:opacity-30 flex items-center justify-center gap-3">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                                INSERT BOT AGENT
                             </button>
-                            <button onclick="window.startGame()" ${playersList.length < 4 ? 'disabled' : ''} class="flex-[2] py-5 rounded-[2rem] font-black text-2xl transition-all shadow-2xl active:scale-95 ${playersList.length >= 4 ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white' : 'bg-slate-800 text-slate-600 opacity-50'}">
-                                START BRIEFING
+                            <button onclick="window.startGame()" ${playersList.length < 3 ? 'disabled' : ''} class="flex-[2] py-5 rounded-[2rem] font-black text-2xl transition-all shadow-2xl active:scale-95 ${playersList.length >= 3 ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white' : 'bg-slate-800 text-slate-600 opacity-50'}">
+                                ${playersList.length < 3 ? `NEED ${3 - playersList.length} MORE` : 'BEGIN OPERATION'}
                             </button>
                         ` : `
                             <div class="w-full py-5 bg-slate-900/50 border border-slate-800 rounded-[2rem] flex flex-col items-center justify-center animate-pulse">
-                                <span class="text-slate-500 font-black text-sm tracking-widest uppercase">Waiting for Mission Director...</span>
+                                <span class="text-slate-500 font-black text-sm tracking-widest uppercase">Waiting for Mission Director Briefing...</span>
                             </div>
                         `}
                     </div>
@@ -480,14 +508,13 @@
             const players = Object.values(state.room.players);
             const isHost = me.isHost;
 
-            // --- Senior Engineering Logic: Humanized Bot Voting ---
-            // Only the host manages bot actions to avoid sync conflicts
+            // --- Humanized Bot Voting Logic ---
             if (isHost && state.room.phase === 'voting') {
                 const pendingBots = players.filter(p => p.isBot && p.isAlive && !p.votedFor);
                 pendingBots.forEach(bot => {
                     if (!bot._voteTimerActive) {
                         bot._voteTimerActive = true;
-                        const delay = 2000 + Math.random() * 5000; // Human-like 2-7s delay
+                        const delay = 2000 + Math.random() * 5000; // Human-like delay
                         setTimeout(() => {
                             const aliveTargets = players.filter(p => p.isAlive);
                             const target = aliveTargets[Math.floor(Math.random() * aliveTargets.length)];
@@ -521,7 +548,7 @@
                                 </div>
                             </div>
                         </div>
-                        ${isHost ? `<button onclick="window.startVoting()" class="mt-12 px-12 py-5 bg-indigo-600 rounded-2xl font-black text-lg shadow-xl shadow-indigo-500/20 active:scale-95 transition-all">START VOTING</button>` : ''}
+                        ${isHost ? `<button onclick="window.startVoting()" class="mt-12 px-12 py-5 bg-indigo-600 rounded-2xl font-black text-lg shadow-xl shadow-indigo-500/20 active:scale-95 transition-all">FORCE VOTE</button>` : ''}
                     </div>
                 `;
             } else if (state.room.phase === 'voting') {
@@ -533,14 +560,17 @@
                             ${alive.map(p => `
                                 <button onclick="window.doVote('${p.id}')" ${me.votedFor || !me.isAlive ? 'disabled' : ''} class="w-full flex items-center justify-between p-4 rounded-3xl border-2 transition-all ${me.votedFor === p.id ? 'bg-indigo-600 border-indigo-400 shadow-lg shadow-indigo-500/30' : 'bg-slate-900/50 border-slate-800'}">
                                     <div class="flex items-center gap-4">
-                                        <img src="${p.avatar}" class="w-14 h-14 rounded-2xl border-2 border-slate-700 object-cover">
-                                        <span class="font-black text-xl text-white uppercase tracking-tight">${p.name}</span>
+                                        <img src="${p.avatar}" class="w-14 h-14 rounded-2xl border-2 border-slate-700 object-cover ${!p.isAlive ? 'grayscale opacity-50' : ''}">
+                                        <span class="font-black text-xl text-white uppercase tracking-tight">${p.name} ${p.isBot ? '(BOT)' : ''}</span>
                                     </div>
-                                    ${p.votedFor ? `<span class="bg-indigo-500/20 text-indigo-300 text-[8px] font-bold px-2 py-1 rounded-full uppercase">LOCKED</span>` : `<span class="text-slate-600 text-[8px] font-bold uppercase animate-pulse">THINKING</span>`}
+                                    <div class="flex items-center gap-3">
+                                        ${p.votedFor ? `<span class="bg-indigo-500/20 text-indigo-300 text-[8px] font-bold px-2 py-1 rounded-full uppercase">LOCKED</span>` : `<span class="text-slate-600 text-[8px] font-bold uppercase animate-pulse">THINKING</span>`}
+                                        ${me.votedFor === p.id ? `<svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" /></svg>` : ''}
+                                    </div>
                                 </button>
                             `).join('')}
                         </div>
-                        ${isHost ? `<button onclick="window.resolveVoting()" class="w-full mt-12 py-6 bg-rose-600 rounded-[2rem] font-black text-xl shadow-2xl active:scale-95 transition-all">RESOLVE</button>` : ''}
+                        ${isHost ? `<button onclick="window.resolveVoting()" class="w-full mt-12 py-6 bg-rose-600 rounded-[2rem] font-black text-xl shadow-2xl active:scale-95 transition-all">RESOLVE EXECUTION</button>` : ''}
                     </div>
                 `;
             } else if (state.room.phase === 'elimination') {
@@ -554,7 +584,7 @@
                             <p class="text-[10px] font-black uppercase opacity-50 mb-3 tracking-widest">Clearance was</p>
                             <p class="text-4xl font-black text-indigo-400 uppercase">${elim?.role || '???'}</p>
                         </div>
-                        ${isHost ? `<button onclick="window.nextRound()" class="mt-14 px-12 py-5 bg-slate-800 rounded-2xl font-black border border-slate-700 transition-all">RESUME</button>` : ''}
+                        ${isHost ? `<button onclick="window.nextRound()" class="mt-14 px-12 py-5 bg-slate-800 rounded-2xl font-black border border-slate-700 transition-all">RESUME MISSION</button>` : ''}
                     </div>
                 `;
             } else if (state.room.phase === 'game_over') {
@@ -585,17 +615,24 @@
                             <span class="bg-indigo-600/20 px-3 py-1 rounded-full border border-indigo-500/20 text-[10px] font-black text-indigo-400 tracking-widest">${state.room.id}</span>
                             <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest">${state.room.phase}</span>
                         </div>
-                        <button onclick="window.leaveRoom()" class="text-[10px] font-black text-slate-600 hover:text-rose-500 uppercase tracking-widest transition-all">Abort</button>
+                        <button onclick="window.leaveRoom()" class="text-[10px] font-black text-slate-600 hover:text-rose-500 uppercase tracking-widest transition-all">Abort Mission</button>
                     </div>
                     <div class="flex-1 flex flex-col justify-center items-center">${content}</div>
                     <div class="mt-12 flex justify-center gap-4 overflow-x-auto no-scrollbar py-2">
-                        ${players.map(p => `<div class="flex-shrink-0 flex flex-col items-center gap-2 transition-all ${!p.isAlive ? 'opacity-30 grayscale blur-[1px]' : ''}"><div class="w-14 h-14 rounded-2xl border-2 overflow-hidden ${p.id === state.user.id ? 'border-indigo-500 shadow-lg shadow-indigo-500/20' : 'border-slate-800'}"><img src="${p.avatar}" class="w-full h-full object-cover"></div><span class="text-[9px] font-black text-slate-500 truncate w-14 text-center uppercase tracking-tighter">${p.name}</span></div>`).join('')}
+                        ${players.map(p => `
+                            <div class="flex-shrink-0 flex flex-col items-center gap-2 transition-all ${!p.isAlive ? 'opacity-30 grayscale blur-[1px]' : ''}">
+                                <div class="w-14 h-14 rounded-2xl border-2 overflow-hidden ${p.id === state.user.id ? 'border-indigo-500 shadow-lg shadow-indigo-500/20' : 'border-slate-800'}">
+                                    <img src="${p.avatar}" class="w-full h-full object-cover">
+                                </div>
+                                <span class="text-[9px] font-black text-slate-500 truncate w-14 text-center uppercase tracking-tighter">${p.name}</span>
+                            </div>
+                        `).join('')}
                     </div>
                 </div>
             `;
         }
 
-        // --- Event Listeners (Globalized for HTML access) ---
+        // --- Event Listeners ---
         window.selectAvatar = (url) => { state.selectedAvatar = url; render(); };
         window.triggerAIGen = () => generateAIAvatar(document.getElementById('nameInput')?.value);
         window.doLogin = () => login(document.getElementById('nameInput')?.value);
@@ -622,6 +659,7 @@
                 updates[`rooms/${state.room.id}/players/${p.id}/votedFor`] = null;
                 updates[`rooms/${state.room.id}/players/${p.id}/role`] = null;
                 updates[`rooms/${state.room.id}/players/${p.id}/word`] = null;
+                delete p._voteTimerActive; // Reset bot timers
             });
             await update(ref(db), updates);
         };
@@ -644,7 +682,7 @@
         // Initial Render
         render();
 
-        // Host Timer Auto-trigger
+        // Host Auto-trigger for phase transition
         setInterval(async () => {
             if (state.room?.status === 'playing' && state.room?.phase === 'discussion' && state.room.players[state.user.id]?.isHost) {
                 if (Date.now() >= state.room.discussionEndTime) {

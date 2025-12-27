@@ -13,7 +13,7 @@ interface WaitingRoomProps {
 const WaitingRoom: React.FC<WaitingRoomProps> = ({ room, userId, onStart, onLeave, isLoading }) => {
   const me = room.players.find(p => p.id === userId);
   const isHost = me?.isHost || false;
-  const canStart = room.players.length >= 4 && room.players.length <= 7;
+  const canStart = room.players.length >= 3 && room.players.length <= 7;
 
   return (
     <div className="w-full max-w-md animate-in fade-in zoom-in duration-300">
@@ -59,9 +59,9 @@ const WaitingRoom: React.FC<WaitingRoomProps> = ({ room, userId, onStart, onLeav
               )}
             </div>
           ))}
-          {room.players.length < 4 && (
+          {room.players.length < 3 && (
             <div className="p-4 border-2 border-dashed border-slate-800 rounded-2xl flex items-center justify-center text-slate-600 italic text-sm">
-              Waiting for {4 - room.players.length} more...
+              Waiting for {3 - room.players.length} more...
             </div>
           )}
         </div>
@@ -95,7 +95,7 @@ const WaitingRoom: React.FC<WaitingRoomProps> = ({ room, userId, onStart, onLeav
         
         {!canStart && isHost && (
           <p className="text-center text-xs font-semibold text-rose-500 uppercase tracking-wider">
-            Need 4-7 players to begin
+            Need 3-7 players to begin
           </p>
         )}
       </div>
