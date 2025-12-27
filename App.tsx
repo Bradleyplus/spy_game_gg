@@ -40,14 +40,12 @@ const App: React.FC = () => {
     }
   }, [room?.id]);
 
-  const getApiKey = (): string => {
-    // @ts-ignore
-    return window.process?.env?.API_KEY || "";
-  };
-
   const generateAIAvatar = async (name: string) => {
     if (!name.trim()) return;
-    const apiKey = getApiKey();
+    
+    // Use process.env.API_KEY directly as per GenAI guidelines
+    // @ts-ignore
+    const apiKey = process.env.API_KEY;
     if (!apiKey) {
       alert("AI Generation requires an API Key.");
       return;
@@ -55,6 +53,7 @@ const App: React.FC = () => {
 
     setGeneratingAvatar(true);
     try {
+      // Initialize GoogleGenAI right before use to ensure current API key is used
       const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
@@ -63,12 +62,15 @@ const App: React.FC = () => {
         }
       });
 
-      for (const part of response.candidates[0].content.parts) {
-        if (part.inlineData) {
-          const base64EncodeString: string = part.inlineData.data;
-          const imageUrl = `data:image/png;base64,${base64EncodeString}`;
-          setSelectedAvatar(imageUrl);
-          break;
+      // Iterate through parts to find the image part, do not assume order
+      if (response.candidates && response.candidates[0]?.content?.parts) {
+        for (const part of response.candidates[0].content.parts) {
+          if (part.inlineData) {
+            const base64EncodeString: string = part.inlineData.data;
+            const imageUrl = `data:image/png;base64,${base64EncodeString}`;
+            setSelectedAvatar(imageUrl);
+            break;
+          }
         }
       }
     } catch (e) {

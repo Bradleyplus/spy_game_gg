@@ -15,13 +15,10 @@ const FALLBACK_WORDS: WordPair[] = [
   { civilian: "Clock", spy: "Watch" }
 ];
 
-function getSafeApiKey(): string {
-  // @ts-ignore
-  return window.process?.env?.API_KEY || "";
-}
-
 export async function fetchWordPairs(count: number = 10): Promise<WordPair[]> {
-  const apiKey = getSafeApiKey();
+  // Use the pre-configured process.env.API_KEY directly as per GenAI guidelines
+  // @ts-ignore
+  const apiKey = process.env.API_KEY;
   if (!apiKey) return FALLBACK_WORDS;
 
   try {
