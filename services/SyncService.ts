@@ -7,9 +7,11 @@ const APP_ID = 'OZ7A77wckSsShsYVtTjbop9r-MdYXbMMI';
 const APP_KEY = 'SrRi1HPGUsd0sxeJZeesPsnS';
 const SERVER_URL = 'https://oz7a77wc.api.lncldglobal.com';
 
-// 确保在初始化之前没有重复初始化
+// Handle global initialization
 try {
   if (!AV.applicationId) {
+    console.log("SyncService: Initializing LeanCloud SDKs...");
+    
     AV.init({
       appId: APP_ID,
       appKey: APP_KEY,
@@ -19,14 +21,20 @@ try {
     const realtime = new Realtime({
       appId: APP_ID,
       appKey: APP_KEY,
-      // Fix: Use 'server' property instead of 'serverURL' as required by Realtime SDK configuration
       server: SERVER_URL
     });
     
-    // 关键：将实时通讯 SDK 绑定到存储 SDK 以启用 LiveQuery
-    // @ts-ignore - setRealtime is the standard way to hook up Realtime for LiveQuery, but may not be present in type definitions
-    AV.setRealtime(realtime);
-    console.log("SyncService: LeanCloud & Realtime initialized successfully.");
+    // Bind realtime to AV for LiveQuery
+    // @ts-ignore
+    if (typeof AV.setRealtime === 'function') {
+      // @ts-ignore
+      AV.setRealtime(realtime);
+      console.log("SyncService: Realtime bound to Storage.");
+    } else {
+      console.warn("SyncService: AV.setRealtime not found, LiveQuery might not trigger.");
+    }
+    
+    console.log("SyncService: LeanCloud Core initialized.");
   }
 } catch (e) {
   console.error("Critical: LeanCloud failed to initialize.", e);
@@ -42,37 +50,40 @@ class SyncService {
       const query = new AV.Query('GameRoom');
       query.equalTo('roomCode', roomId);
       
-      // 注意：LiveQuery 需要在 LeanCloud 控制台的“服务设置”中开启
       this.liveQuery = await query.subscribe();
-      console.log(`SyncService: Subscribed to room ${roomId}`);
+      console.log(`SyncService: Subscribed to LiveQuery for room ${roomId}`);
       
-      this.liveQuery.on('update', (obj: any) => {
-        const payload = obj.get('payload');
-        if (payload) {
-          console.log("SyncService: Remote update received", payload);
-          callback(payload);
-        }
-      });
+      this.liveQuery.on('create', (obj: any) => this.handleUpdate(obj, callback));
+      this.liveQuery.on('update', (obj: any) => this.handleUpdate(obj, callback));
+      this.liveQuery.on('enter', (obj: any) => this.handleUpdate(obj, callback));
 
       this.liveQuery.on('delete', () => {
-        console.warn("SyncService: Room was deleted remotely.");
+        console.warn("SyncService: Room deleted remotely.");
         // @ts-ignore
         callback(null);
       });
 
-      // 立即获取当前最新状态
+      // Initial fetch
       const initial = await this.getRoom(roomId);
       if (initial) callback(initial);
     } catch (err) {
-      console.error("SyncService: Subscription failed", err);
+      console.error("SyncService: Subscription error", err);
+    }
+  }
+
+  private handleUpdate(obj: any, callback: (room: Room) => void) {
+    const payload = obj.get('payload');
+    if (payload) {
+      console.log("SyncService: Sync update received", payload.id);
+      callback(payload);
     }
   }
 
   public unsubscribe(roomId: string) {
     if (this.liveQuery) {
-      this.liveQuery.unsubscribe();
+      console.log(`SyncService: Unsubscribing from ${roomId}`);
+      this.liveQuery.unsubscribe().catch(() => {});
       this.liveQuery = null;
-      console.log(`SyncService: Unsubscribed from ${roomId}`);
     }
   }
 
@@ -89,8 +100,8 @@ class SyncService {
       }
 
       obj.set('payload', room);
-      await obj.save();
-      console.log("SyncService: Broadcast success");
+      const saved = await obj.save();
+      console.log("SyncService: Broadcast successful", saved.id);
     } catch (err) {
       console.error("SyncService: Broadcast failed", err);
     }
@@ -101,9 +112,9 @@ class SyncService {
       const query = new AV.Query('GameRoom');
       query.equalTo('roomCode', roomId);
       const obj = await query.first();
-      return obj ? obj.get('payload') : null;
+      return obj ? (obj.get('payload') as Room) : null;
     } catch (err) {
-      console.error("SyncService: Fetch room failed", err);
+      console.error("SyncService: getRoom failed", err);
       return null;
     }
   }
@@ -120,6 +131,7 @@ class SyncService {
 
         if (updatedPlayers.length === 0) {
           await obj.destroy();
+          console.log("SyncService: Last player left, room destroyed.");
         } else {
           const hasHost = updatedPlayers.some(p => p.isHost);
           if (!hasHost && updatedPlayers.length > 0) {
@@ -128,10 +140,11 @@ class SyncService {
           roomData.players = updatedPlayers;
           obj.set('payload', roomData);
           await obj.save();
+          console.log("SyncService: Player left, room updated.");
         }
       }
     } catch (err) {
-      console.error("SyncService: LeaveRoom failed", err);
+      console.error("SyncService: leaveRoom failed", err);
     }
   }
 }
