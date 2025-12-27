@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Undercover - Web Spy Game</title>
     <script>
-      // 1. 全局错误捕获机制 (放在最顶部)
+      // 1. 核心报错捕获
       window.onerror = function(msg, source, lineno, colno, error) {
         var errorDisplay = document.getElementById('debug-error-display');
         if (!errorDisplay) {
@@ -15,31 +15,33 @@
             errorDisplay.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:#0f172a; color:#f87171; padding:30px; z-index:100000; font-family:monospace; overflow:auto;';
             document.documentElement.appendChild(errorDisplay);
         }
-        errorDisplay.innerHTML = '<h1 style="color:white;font-size:24px;margin-bottom:20px;">CRITICAL SCRIPT ERROR</h1>' +
+        errorDisplay.innerHTML = '<h1 style="color:white;font-size:24px;margin-bottom:20px;">CRITICAL ERROR</h1>' +
                                  '<p style="background:#7f1d1d;padding:15px;border-radius:8px;color:white;">' + msg + '</p>' +
-                                 '<ul style="list-style:none;padding:0;margin-top:20px;color:#94a3b8;font-size:12px;">' +
-                                 '<li>File: ' + source + '</li>' +
-                                 '<li>Line: ' + lineno + ':' + colno + '</li>' +
-                                 '</ul>' +
-                                 '<button onclick="location.reload()" style="margin-top:20px;padding:10px 20px;background:#4f46e5;color:white;border:none;border-radius:8px;cursor:pointer;">FORCE RELOAD</button>';
+                                 '<div style="margin-top:20px;color:#94a3b8;font-size:12px;">' +
+                                 'Source: ' + source + '<br>Location: ' + lineno + ':' + colno + '</div>' +
+                                 '<button onclick="location.reload()" style="margin-top:20px;padding:12px 24px;background:#4f46e5;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:bold;">FORCE RELOAD</button>';
         return false;
       };
 
-      // 2. 加载超时检测 (8秒)
+      // 2. 这里的超时时间稍微延长到 10秒，给 ESM 解析留出空间
       window.loadTimer = setTimeout(function() {
           const root = document.getElementById('root');
-          // 如果 root 里面还是加载动画（说明 React 没能成功 mount 并替换内容）
           if (root && root.querySelector('.boot-loader')) {
               root.innerHTML = `
                 <div style="height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:20px; background:#020617;">
                     <div style="font-size:48px; margin-bottom:20px;">📡</div>
                     <h2 style="color:#f87171; font-weight:900; margin-bottom:10px;">CONNECTION TIMEOUT</h2>
-                    <p style="color:#94a3b8; max-width:300px; font-size:14px; margin-bottom:30px;">Initialization took too long. This might be due to a slow network or a Firebase configuration issue.</p>
+                    <p style="color:#94a3b8; max-width:400px; font-size:14px; margin-bottom:30px;">
+                        The application is taking too long to initialize.<br><br>
+                        Possible causes:<br>
+                        1. Slow connection to ESM.sh (CDN)<br>
+                        2. Firebase blocking (check VPN/Network)<br>
+                        3. Browser cache conflict
+                    </p>
                     <button onclick="location.reload()" style="padding:12px 24px; background:#1e293b; color:white; border:1px solid #334155; border-radius:12px; font-weight:bold; cursor:pointer;">RETRY CONNECTION</button>
-                    <p style="margin-top:20px; font-size:10px; color:#475569; font-family:monospace;">Check console for detailed logs</p>
                 </div>`;
           }
-      }, 8000);
+      }, 10000);
     </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&display=swap" rel="stylesheet">
@@ -49,6 +51,7 @@
         @keyframes pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
         @keyframes spin { to { transform: rotate(360deg); } }
     </style>
+    <!-- 修复后的 importmap：删除了所有重复和冲突的版本 -->
     <script type="importmap">
 {
   "imports": {
@@ -73,6 +76,7 @@
             <p style="margin-top: 20px; font-weight: 900; letter-spacing: 0.4em; color: #4f46e5; font-size: 10px; text-transform: uppercase;">Initializing Neural Link...</p>
         </div>
     </div>
-    <script type="module" src="./index.tsx"></script>
+    <!-- 使用相对路径确保在二级目录下也能正确引用 -->
+    <script type="module" src="index.tsx"></script>
 </body>
 </html>
